@@ -242,3 +242,15 @@ def test_users_and_roles(run: Run) -> None:
 def test_completion(run: Run, shell: str) -> None:
     script = run("completion", shell).out
     assert "instances" in script and "set-stage" in script
+
+
+def test_the_zipapp_runs(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from scripts.build_zipapp import build
+
+    archive = build(tmp_path / "sudoo.pyz")
+    result = subprocess.run([sys.executable, "-I", str(archive), "version"], capture_output=True, text=True, check=False)  # noqa: S603
+    assert result.returncode == 0
+    assert result.stdout.startswith(f"sudoo-cli {__version__}")
