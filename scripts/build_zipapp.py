@@ -1,6 +1,6 @@
 """Build dist/sudoo.pyz: the whole command in one file, for servers without pip (needs only Python 3.12+).
 
-    python3 scripts/build_zipapp.py && ./dist/sudoo.pyz version
+python3 scripts/build_zipapp.py && ./dist/sudoo.pyz version
 """
 
 from __future__ import annotations

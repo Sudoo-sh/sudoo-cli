@@ -20,7 +20,7 @@ EPILOG = """\
 Credentials come from `sudoo login` (a profile) or from SUDOO_URL, SUDOO_TOKEN and SUDOO_SECRET.
 Exit codes: 0 ok, 1 error, 2 usage, 3 not logged in or credentials refused, 4 not allowed, 5 not found,
 6 conflict, 7 invalid value, 8 rate limited, 9 panel error, 10 network or TLS, 11 job failed, 130 interrupted.
-Documentation: https://docs.sudoo.sh/cli/"""
+Documentation: https://docs.sudoo.sh/cli"""
 
 
 def _globals(defaults: bool) -> argparse.ArgumentParser:

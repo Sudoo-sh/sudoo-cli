@@ -35,7 +35,7 @@ sudoo = "sudoo_cli.cli:main"
 
 [project.urls]
 Homepage = "https://sudoo.sh"
-Documentation = "https://docs.sudoo.sh/cli/"
+Documentation = "https://docs.sudoo.sh/cli"
 Source = "https://github.com/Sudoo-sh/sudoo-cli"
 Issues = "https://github.com/Sudoo-sh/sudoo-cli/issues"
 Changelog = "https://github.com/Sudoo-sh/sudoo-cli/blob/main/CHANGELOG.md"

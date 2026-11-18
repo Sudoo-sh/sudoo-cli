@@ -251,6 +251,7 @@ def test_the_zipapp_runs(tmp_path: Path) -> None:
     from scripts.build_zipapp import build
 
     archive = build(tmp_path / "sudoo.pyz")
-    result = subprocess.run([sys.executable, "-I", str(archive), "version"], capture_output=True, text=True, check=False)  # noqa: S603
+    command = [sys.executable, "-I", str(archive), "version"]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
     assert result.returncode == 0
     assert result.stdout.startswith(f"sudoo-cli {__version__}")
