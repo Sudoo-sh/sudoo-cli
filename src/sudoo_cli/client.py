@@ -103,7 +103,7 @@ class Client:
         retries: int = 3,
         debug: bool = False,
         log: IO[str] | None = None,
-        sleep: Callable[[float], None] = time.sleep,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.profile = profile
         self.base = check_url(profile.url)
@@ -111,7 +111,7 @@ class Client:
         self.retries = retries
         self.debug = debug
         self.log = log or sys.stderr
-        self.sleep = sleep
+        self.sleep = sleep or time.sleep
         context: ssl.SSLContext | None = None
         if self.base.startswith("https://"):
             try:

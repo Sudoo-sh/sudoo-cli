@@ -456,9 +456,8 @@ def deploy(ctx: Context) -> None:
     else:
         raise CliError("Give an instance, or --project and --branch.", USAGE)
     action = "update-submodules" if a.submodules else "update"
-    finals = []
     for name in names:
-        finals.append(ctx.job(ctx.client.post(f"/instances/{quote(name)}/actions/{action}", {}).data))
+        ctx.job(ctx.client.post(f"/instances/{quote(name)}/actions/{action}", {}).data)
     if not ctx.json and not a.no_wait:
         for name in names:
             print(f"{name}: up to date")

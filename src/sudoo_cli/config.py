@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .errors import AUTH, USAGE, CliError
+from .signing import ACTING_FOR
 
 KEYRING_SERVICE = "sudoo-cli"
 PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -196,13 +197,16 @@ def resolve(requested: str | None, ca_cert: str | None = None, acting_for: str |
             )
         missing = [label for label, value in (("URL", url), ("token", token), ("signing secret", secret)) if not value]
         raise CliError(f"Profile {name!r} has no {', '.join(missing)}. Run `sudoo login --profile {name}` again.", AUTH)
+    acting = acting_for or env.get("SUDOO_ACTING_FOR") or stored.get("acting_for")
+    if acting is not None and not ACTING_FOR.fullmatch(acting):
+        raise CliError("--acting-for: 1 to 120 letters, digits, '.', '_', '@', '+' or '-'.", USAGE)
     return Profile(
         name=name,
         url=url.rstrip("/"),
         token=token,
         secret=secret,
         ca_cert=ca_cert or env.get("SUDOO_CA_CERT") or stored.get("ca_cert"),
-        acting_for=acting_for or env.get("SUDOO_ACTING_FOR") or stored.get("acting_for"),
+        acting_for=acting,
     )
 
 
