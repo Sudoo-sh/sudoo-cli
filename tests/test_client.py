@@ -156,8 +156,20 @@ def test_network_errors_exit_10(run: Run, monkeypatch: pytest.MonkeyPatch) -> No
 def test_tls_is_verified_and_a_custom_ca_can_be_trusted(
     run: Run, panel: MockPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ca_key, ca, key, csr, cert, ext = (tmp_path / n for n in ("ca.key", "ca.pem", "s.key", "s.csr", "s.pem", "ext.cnf"))
-    ext.write_text("subjectAltName=DNS:localhost\n")
+    names = ("ca.key", "ca.pem", "ca.cnf", "s.key", "s.csr", "s.pem", "s.cnf")
+    ca_key, ca, ca_cnf, key, csr, cert, leaf_cnf = (tmp_path / n for n in names)
+    # Certificates as Python 3.13+ (VERIFY_X509_STRICT) requires them, independent of the system's openssl.cnf.
+    ca_cnf.write_text(
+        "[req]\ndistinguished_name = dn\nprompt = no\nx509_extensions = v3_ca\n"
+        "[dn]\nCN = Test CA\n"
+        "[v3_ca]\nbasicConstraints = critical, CA:TRUE\nkeyUsage = critical, keyCertSign, cRLSign\n"
+        "subjectKeyIdentifier = hash\n"
+    )
+    leaf_cnf.write_text(
+        "[leaf]\nbasicConstraints = critical, CA:FALSE\nkeyUsage = critical, digitalSignature, keyEncipherment\n"
+        "extendedKeyUsage = serverAuth\nsubjectAltName = DNS:localhost\n"
+        "subjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid:always\n"
+    )
     for command in (
         [
             "req",
@@ -171,10 +183,10 @@ def test_tls_is_verified_and_a_custom_ca_can_be_trusted(
             ca,
             "-days",
             "2",
-            "-subj",
-            "/CN=Test CA",
+            "-config",
+            ca_cnf,
         ],
-        ["req", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", csr, "-subj", "/CN=localhost"],
+        ["req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", csr, "-subj", "/CN=localhost"],
         [
             "x509",
             "-req",
@@ -190,7 +202,9 @@ def test_tls_is_verified_and_a_custom_ca_can_be_trusted(
             "-days",
             "2",
             "-extfile",
-            ext,
+            leaf_cnf,
+            "-extensions",
+            "leaf",
         ],
     ):
         subprocess.run(["openssl", *map(str, command)], check=True, capture_output=True)  # noqa: S603, S607
