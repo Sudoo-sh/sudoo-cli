@@ -1,0 +1,84 @@
+[project]
+name = "sudoo-cli"
+version = "3.0.0"
+description = "The sudoo command: manage the projects, instances, backups, domains and jobs of a Sudoo.sh panel from a terminal or a CI pipeline."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE.md"]
+authors = [
+    { name = "Sudoo.sh", email = "support@sudoo.sh" }
+]
+requires-python = ">=3.12"
+keywords = ["sudoo", "odoo", "cli", "devops", "ci"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
+]
+# No required dependencies: the command uses Python's standard library only, so it also runs as a single-file
+# zipapp on a server. The OS keyring is optional.
+dependencies = []
+
+[project.optional-dependencies]
+keyring = ["keyring>=25.6.0"]
+
+[project.scripts]
+sudoo = "sudoo_cli.cli:main"
+
+[project.urls]
+Homepage = "https://sudoo.sh"
+Documentation = "https://docs.sudoo.sh/cli/"
+Source = "https://github.com/Sudoo-sh/sudoo-cli"
+Issues = "https://github.com/Sudoo-sh/sudoo-cli/issues"
+Changelog = "https://github.com/Sudoo-sh/sudoo-cli/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "sudoo_cli"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import order, bugbear, modern syntax, simplifications, security
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "S", "RUF"]
+ignore = ["E501"]  # the formatter decides line length
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]  # assert and fixed test values
+
+[tool.ruff.lint.isort]
+known-first-party = ["sudoo_cli"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["keyring", "keyring.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.0",
+    "pytest>=8.4.0",
+    "ruff>=0.13.0",
+]
