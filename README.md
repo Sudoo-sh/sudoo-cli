@@ -1,5 +1,7 @@
 # sudoo-cli
 
+[![PyPI](https://img.shields.io/pypi/v/sudoo-cli)](https://pypi.org/project/sudoo-cli/)
+
 `sudoo` is the command-line client of the [Sudoo.sh](https://sudoo.sh) panel: list and create instances, deploy
 the latest code of a branch, follow jobs live, back up and restore, manage custom domains and read caught mail, from
 a terminal or a CI pipeline. Every request is signed with your API token's signing secret, exactly as the panel's
@@ -9,8 +11,11 @@ It needs Python 3.12 or later and nothing else (the OS keyring is optional).
 
 ## Install
 
+`sudoo-cli` is published on [PyPI](https://pypi.org/project/sudoo-cli/).
+
 ```bash
 pipx install sudoo-cli          # or: uv tool install sudoo-cli
+pip install sudoo-cli           # in a virtual environment
 pipx install 'sudoo-cli[keyring]'   # keep credentials in the OS keyring
 ```
 

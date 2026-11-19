@@ -5,6 +5,10 @@ and the project uses [semantic versioning](https://semver.org). Its version foll
 
 ## Unreleased
 
+### Changed
+
+- The README and the guide link to the package on PyPI, and the README shows `pip install sudoo-cli` too.
+
 ## 3.0.0 - 2026-11-18
 
 First release, for Sudoo.sh panels 3.x (`/api/v1`).
