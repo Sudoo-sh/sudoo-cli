@@ -16,7 +16,7 @@ from .mock_panel import MockPanel
 def test_version(run: Run) -> None:
     result = run("version", "--json")
     assert result.code == 0
-    assert result.json()["version"] == __version__ == "3.0.0"
+    assert result.json()["version"] == __version__ == "3.0.1"
 
 
 def test_status(run: Run) -> None:
@@ -236,6 +236,57 @@ def test_jobs(run: Run) -> None:
 def test_users_and_roles(run: Run) -> None:
     assert "sam@example.com" in run("users", "list").out
     assert "Administrator" in run("users", "roles").out
+
+
+def test_teams(run: Run, panel: MockPanel) -> None:
+    assert "No teams." in run("teams", "list").out
+    made = run("teams", "create", "Sales devs", "--description", "The sales team", "--member", "sam", "--json")
+    assert made.code == 0 and made.json()["id"] == "sales-devs"
+    assert run("teams", "create", "sales DEVS").code == errors.CONFLICT
+    assert run("teams", "create", "Other", "--member", "nobody").code == errors.INVALID
+    assert "Sales devs" in run("teams", "list").out
+    shown = run("teams", "show", "sales devs")  # by name, case aside
+    assert shown.code == 0 and "Sam Lee" in shown.out
+    assert run("teams", "show", "nope").code == errors.NOT_FOUND
+
+    added = run("teams", "members", "add", "sales-devs", "ana", "omar", "--json").json()
+    assert [m["name"] for m in added["members"]] == ["ana", "omar", "sam"]
+    assert json.loads(panel.state.requests[-1]["body"]) == {"members": ["ana", "omar", "sam"]}
+    removed = run("teams", "members", "remove", "sales-devs", "omar", "--json").json()
+    assert [m["name"] for m in removed["members"]] == ["ana", "sam"]
+    assert run("teams", "members", "remove", "sales-devs", "omar").code == errors.NOT_FOUND
+    renamed = run("teams", "rename", "sales-devs", "Sales", "--json").json()
+    assert renamed["name"] == "Sales" and renamed["id"] == "sales-devs"
+
+    assert run("teams", "grants", "set", "Sales", "sales", "developer").code == 0
+    assert run("teams", "grants", "set", "Sales", "sales", "admin", "--branch", "main").code == 0
+    access = run("teams", "grants", "list", "sales", "--json").json()
+    assert access["grants"] == [{"type": "team", "id": "sales-devs", "level": "developer", "name": "Sales"}]
+    assert access["branches"]["main"]["grants"][0]["level"] == "admin"
+    # a second grant replaces the first; the names the panel adds are never sent back
+    assert run("teams", "grants", "set", "Sales", "sales", "view").code == 0
+    sent = json.loads(panel.state.requests[-1]["body"])
+    assert sent["grants"] == [{"type": "team", "id": "sales-devs", "level": "view"}]
+    assert "branch main" in run("teams", "grants", "list", "sales").out
+    assert "sales" in run("teams", "show", "Sales").out
+    assert run("teams", "grants", "remove", "Sales", "sales", "--branch", "main").code == 0
+    assert run("teams", "grants", "list", "sales", "--json").json()["branches"] == {}
+    assert run("teams", "grants", "remove", "Sales", "sales", "--branch", "main").code == errors.NOT_FOUND
+    assert run("teams", "grants", "set", "Sales", "nope", "view").code == errors.NOT_FOUND
+    with pytest.raises(SystemExit) as usage:
+        run("teams", "grants", "set", "Sales", "sales", "owner")
+    assert usage.value.code == errors.USAGE
+
+    # without the premium feature the panel refuses new teams and members (exit 4); taking out still works
+    panel.state.teams_on_plan = False
+    refused = run("teams", "create", "QA", "--json")
+    assert refused.code == errors.FORBIDDEN and refused.json()["error"]["status"] == 403
+    assert run("teams", "members", "add", "Sales", "omar").code == errors.FORBIDDEN
+    assert run("teams", "members", "remove", "Sales", "ana").code == 0
+
+    assert run("teams", "delete", "Sales").code == errors.USAGE  # not a terminal: needs --yes
+    assert run("teams", "delete", "Sales", "--yes").code == 0
+    assert run("teams", "list", "--json").json()["data"] == []
 
 
 @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
