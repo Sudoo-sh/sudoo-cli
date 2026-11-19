@@ -26,7 +26,8 @@ Everything it does, the panel's web app can do too; the panel checks the same pe
 
 ## 1. Installing
 
-`sudoo` needs Python 3.12 or later, and nothing else.
+`sudoo` needs Python 3.12 or later, and nothing else. It is published on PyPI as
+[`sudoo-cli`](https://pypi.org/project/sudoo-cli/).
 
 | How | Command |
 | :--- | :--- |
