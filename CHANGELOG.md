@@ -5,7 +5,16 @@ and the project uses [semantic versioning](https://semver.org). Its version foll
 
 ## Unreleased
 
+### Added
+
+- `sudoo teams`: `list`, `show`, `create`, `rename`, `delete`, `members add` and `members remove`, and `grants list`,
+  `grants set` and `grants remove` for a team's level in a project or one of its branches, matching the panel's
+  teams and project access API. A team is named by its id or its name. Teams are a premium feature (Pro and
+  Business); the help says so. `--json` and the usual exit codes apply.
+
 ### Changed
+
+- Version 3.0.1.
 
 - The README and the guide link to the package on PyPI, and the README shows `pip install sudoo-cli` too.
 

@@ -1,6 +1,6 @@
 [project]
 name = "sudoo-cli"
-version = "3.0.0"
+version = "3.0.1"
 description = "The sudoo command: manage the projects, instances, backups, domains and jobs of a Sudoo.sh panel from a terminal or a CI pipeline."
 readme = "README.md"
 license = "Apache-2.0"

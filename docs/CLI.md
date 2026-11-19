@@ -221,6 +221,31 @@ back by itself when the update fails; `sudoo` then ends with exit code 11 and th
 | `sudoo users list` | The panel's accounts (a `write` token) |
 | `sudoo users roles` | The roles and what each allows |
 
+### Teams
+
+Teams group panel accounts so that a project or a branch can be given to them at once. Teams are a **premium
+feature of the Pro and Business plans**: on another plan the panel answers 403 (exit 4) when you create a team, add
+members or give access, while listing, taking members out, taking access away and deleting always work. Reading
+teams needs `teams.manage` or `projects.access`; changing them needs `teams.manage`, and grants need
+`projects.access` in the project. A team is named by its id or its name (case aside).
+
+| Command | Does |
+| :--- | :--- |
+| `sudoo teams list` | Every team, its number of members and the projects that name it |
+| `sudoo teams show TEAM` | One team: description, members with their roles, projects |
+| `sudoo teams create NAME [--description TEXT] [--member ACCOUNT ...]` | Make a team (409, exit 6, when the name is taken) |
+| `sudoo teams rename TEAM NAME [--description TEXT]` | A new name (and description) |
+| `sudoo teams delete TEAM [--yes]` | Delete it; it leaves every grant and branch lock |
+| `sudoo teams members add TEAM ACCOUNT ...` | Add panel accounts to the team |
+| `sudoo teams members remove TEAM ACCOUNT ...` | Take accounts out (exit 5 for one that is not in it) |
+| `sudoo teams grants list PROJECT` | The project's access mode and its grants (teams and accounts), the branches' too |
+| `sudoo teams grants set TEAM PROJECT LEVEL [--branch BRANCH]` | Give the team `none`, `view`, `developer`, `maintainer` or `admin` in the project, or only in one branch; it replaces the team's earlier level there |
+| `sudoo teams grants remove TEAM PROJECT [--branch BRANCH]` | Take the team's grant away; the panel roles (or its other grants) decide again |
+
+A grant never gives more than the account's role allows. `grants set` and `grants remove` read the project's access
+and send it back whole with the one change (`PUT /projects/<id>/access`); the panel answers 409 when the change
+would leave you without `projects.access` in the project.
+
 ---
 
 ## 5. Jobs

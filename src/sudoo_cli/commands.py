@@ -914,3 +914,191 @@ def roles_list(ctx: Context) -> None:
         response.data.get("roles") or [],
         [("role", get("name")), ("label", get("label")), ("description", get("description"))],
     )
+
+
+# -- teams (premium: Pro and Business) --------------------------------------------------------------------------------
+
+ACCESS_LEVELS = ("none", "view", "developer", "maintainer", "admin")
+
+
+def _team(ctx: Context, ref: str) -> dict[str, Any]:
+    """A team by its id or its name (case aside)."""
+    teams: list[dict[str, Any]] = ctx.client.get("/teams").data or []
+    for team in teams:
+        if team.get("id") == ref:
+            return team
+    wanted = ref.casefold()
+    for team in teams:
+        if str(team.get("name", "")).casefold() == wanted:
+            return team
+    raise CliError(f"There is no team {ref}.", NOT_FOUND)
+
+
+def _member_names(team: dict[str, Any]) -> list[str]:
+    return [str(m.get("name")) if isinstance(m, dict) else str(m) for m in team.get("members") or []]
+
+
+def _show_team(ctx: Context, team: dict[str, Any]) -> None:
+    if ctx.json:
+        emit_json(team)
+        return
+    fields(
+        [
+            ("Team", f"{team.get('name')} ({team.get('id')})"),
+            ("Description", team.get("description") or "-"),
+            ("Projects", ", ".join(str(p.get("name") or p.get("id")) for p in team.get("projects") or []) or "-"),
+            ("Created", f"{when(team.get('created_at'))} by {team.get('created_by') or '-'}"),
+            ("Changed", f"{when(team.get('changed_at'))} by {team.get('changed_by') or '-'}"),
+        ]
+    )
+    print()
+    table(
+        [m for m in team.get("members") or [] if isinstance(m, dict)],
+        [("member", get("name")), ("name", get("display_name")), ("role", get("role"))],
+        "No members.",
+    )
+
+
+def teams_list(ctx: Context) -> None:
+    response = ctx.client.get("/teams")
+    if ctx.json:
+        emit_json(response.json())
+        return
+    table(
+        response.data or [],
+        [
+            ("id", get("id")),
+            ("team", get("name")),
+            ("members", lambda t: len(t.get("members") or [])),
+            ("projects", lambda t: ", ".join(str(p.get("id")) for p in t.get("projects") or []) or "-"),
+            ("description", lambda t: (t.get("description") or "-")[:50]),
+        ],
+        "No teams.",
+    )
+
+
+def teams_show(ctx: Context) -> None:
+    _show_team(ctx, _team(ctx, ctx.args.team))
+
+
+def teams_create(ctx: Context) -> None:
+    a = ctx.args
+    body: dict[str, Any] = {"name": a.name}
+    if a.description is not None:
+        body["description"] = a.description
+    if a.member:
+        body["members"] = sorted(set(a.member))
+    _show_team(ctx, ctx.client.post("/teams", body).data)
+
+
+def _change_team(ctx: Context, team: dict[str, Any], body: dict[str, Any]) -> None:
+    _show_team(ctx, ctx.client.request("PATCH", f"/teams/{quote(str(team['id']))}", body).data)
+
+
+def teams_rename(ctx: Context) -> None:
+    a = ctx.args
+    body: dict[str, Any] = {"name": a.name}
+    if a.description is not None:
+        body["description"] = a.description
+    _change_team(ctx, _team(ctx, a.team), body)
+
+
+def teams_delete(ctx: Context) -> None:
+    team = _team(ctx, ctx.args.team)
+    ctx.confirm(f"Delete the team {team.get('name')} (it leaves every project grant and branch lock)?")
+    ctx.client.request("DELETE", f"/teams/{quote(str(team['id']))}")
+    if ctx.json:
+        emit_json({"deleted": team.get("id")})
+    else:
+        print(f"Team {team.get('name')} deleted.")
+
+
+def teams_members_add(ctx: Context) -> None:
+    team = _team(ctx, ctx.args.team)
+    members = sorted(set(_member_names(team)) | set(ctx.args.accounts))
+    _change_team(ctx, team, {"members": members})
+
+
+def teams_members_remove(ctx: Context) -> None:
+    team = _team(ctx, ctx.args.team)
+    current = _member_names(team)
+    missing = sorted(set(ctx.args.accounts) - set(current))
+    if missing:
+        raise CliError(
+            f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not in {team.get('name')}.", NOT_FOUND
+        )
+    _change_team(ctx, team, {"members": sorted(set(current) - set(ctx.args.accounts))})
+
+
+def _access_body(access: dict[str, Any]) -> dict[str, Any]:
+    """The project's access as PUT /projects/<id>/access takes it (without the names the panel adds)."""
+
+    def plain(grants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{"type": g.get("type"), "id": g.get("id"), "level": g.get("level")} for g in grants or []]
+
+    return {
+        "mode": access.get("mode"),
+        "grants": plain(access.get("grants") or []),
+        "branches": {
+            name: {"restricted": bool(b.get("restricted")), "grants": plain(b.get("grants") or [])}
+            for name, b in (access.get("branches") or {}).items()
+        },
+    }
+
+
+def _show_access(ctx: Context, project: str, access: dict[str, Any]) -> None:
+    if ctx.json:
+        emit_json(access)
+        return
+    rows = [{"where": "project", **g} for g in access.get("grants") or []]
+    for name, branch in sorted((access.get("branches") or {}).items()):
+        restricted = " (restricted)" if branch.get("restricted") else ""
+        rows += [{"where": f"branch {name}{restricted}", **g} for g in branch.get("grants") or []]
+    print(f"Project {project}: {access.get('mode')}")
+    table(
+        rows,
+        [
+            ("where", get("where")),
+            ("type", get("type")),
+            ("id", get("id")),
+            ("name", get("name")),
+            ("level", get("level")),
+        ],
+        "No grants: the panel roles decide.",
+    )
+
+
+def teams_grants_list(ctx: Context) -> None:
+    project = ctx.args.project
+    _show_access(ctx, project, ctx.client.get(f"/projects/{quote(project)}/access").data)
+
+
+def _change_grant(ctx: Context, level: str | None) -> None:
+    """Give the team a level in the project or one of its branches (level None: take its grant away)."""
+    a = ctx.args
+    team = _team(ctx, a.team)
+    path = f"/projects/{quote(a.project)}/access"
+    body = _access_body(ctx.client.get(path).data)
+    if a.branch:
+        branch = body["branches"].setdefault(a.branch, {"restricted": False, "grants": []})
+        grants = branch["grants"]
+    else:
+        grants = body["grants"]
+    others = [g for g in grants if not (g.get("type") == "team" and g.get("id") == team["id"])]
+    if level is None and len(others) == len(grants):
+        where = f"branch {a.branch} of {a.project}" if a.branch else a.project
+        raise CliError(f"The team {team.get('name')} has no grant in {where}.", NOT_FOUND)
+    if level is not None:
+        others.append({"type": "team", "id": team["id"], "level": level})
+    grants[:] = others
+    if a.branch and not grants and not body["branches"][a.branch]["restricted"]:
+        del body["branches"][a.branch]
+    _show_access(ctx, a.project, ctx.client.request("PUT", path, body).data)
+
+
+def teams_grants_set(ctx: Context) -> None:
+    _change_grant(ctx, ctx.args.level)
+
+
+def teams_grants_remove(ctx: Context) -> None:
+    _change_grant(ctx, None)

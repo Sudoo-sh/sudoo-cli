@@ -16,6 +16,12 @@ STAGES = ("development", "staging", "production")
 EDITIONS = ("community", "enterprise")
 STATUSES = ("creating", "online", "starting", "busy", "paused", "switched_off", "stopped", "unknown")
 
+TEAMS_HELP = (
+    "teams of accounts and their access to projects and branches. Teams are a premium feature (Pro and Business): "
+    "on other plans the panel answers 403 when you create a team, add members or give access; reading, taking "
+    "members out, taking access away and deleting always work"
+)
+
 EPILOG = """\
 Credentials come from `sudoo login` (a profile) or from SUDOO_URL, SUDOO_TOKEN and SUDOO_SECRET.
 Exit codes: 0 ok, 1 error, 2 usage, 3 not logged in or credentials refused, 4 not allowed, 5 not found,
@@ -77,6 +83,11 @@ class Builder:
     def group(self, name: str, help_: str) -> Any:
         p = self.top.add_parser(name, help=help_, description=help_)
         return p.add_subparsers(dest="subcommand", metavar="ACTION", required=True)
+
+    def subgroup(self, parent: Any, name: str, help_: str) -> Any:
+        """A group inside a group (`sudoo teams members add ...`)."""
+        p = parent.add_parser(name, help=help_, description=help_)
+        return p.add_subparsers(dest="action", metavar="ACTION", required=True)
 
     def cmd(self, parent: Any, name: str, help_: str, handler: Handler, job: bool = False) -> argparse.ArgumentParser:
         p: argparse.ArgumentParser = parent.add_parser(name, help=help_, description=help_, parents=[self.common])
@@ -294,6 +305,43 @@ def build_parser() -> argparse.ArgumentParser:
     g = b.group("users", "the panel's accounts")
     b.cmd(g, "list", "every account (needs a write token)", commands.users_list)
     b.cmd(g, "roles", "the roles and their permissions", commands.roles_list)
+
+    # teams (premium)
+    g = b.group("teams", TEAMS_HELP)
+    b.cmd(g, "list", "every team, with its members and the projects that name it", commands.teams_list)
+    p = b.cmd(g, "show", "a team: its members and projects", commands.teams_show)
+    p.add_argument("team", help="the team's id or name")
+    p = b.cmd(g, "create", "make a team", commands.teams_create)
+    p.add_argument("name")
+    p.add_argument("--description")
+    p.add_argument("--member", action="append", metavar="ACCOUNT", help="an account to add (repeat for more)")
+    p = b.cmd(g, "rename", "give a team a new name (and description)", commands.teams_rename)
+    p.add_argument("team", help="the team's id or name")
+    p.add_argument("name", help="the new name")
+    p.add_argument("--description")
+    p = b.cmd(g, "delete", "delete a team; it leaves every grant and lock", commands.teams_delete)
+    p.add_argument("team", help="the team's id or name")
+    p.add_argument("--yes", "-y", action="store_true", help="do not ask")
+    members = b.subgroup(g, "members", "add accounts to a team or take them out")
+    for name, handler, help_ in (
+        ("add", commands.teams_members_add, "add accounts to a team"),
+        ("remove", commands.teams_members_remove, "take accounts out of a team"),
+    ):
+        p = b.cmd(members, name, help_, handler)
+        p.add_argument("team", help="the team's id or name")
+        p.add_argument("accounts", nargs="+", metavar="ACCOUNT", help="the panel account's name")
+    grants = b.subgroup(g, "grants", "the levels teams have in projects and branches")
+    p = b.cmd(grants, "list", "a project's grants (teams and accounts) and its branches'", commands.teams_grants_list)
+    p.add_argument("project", help="the project's id")
+    p = b.cmd(grants, "set", "give a team a level in a project or one of its branches", commands.teams_grants_set)
+    p.add_argument("team", help="the team's id or name")
+    p.add_argument("project", help="the project's id")
+    p.add_argument("level", choices=commands.ACCESS_LEVELS)
+    p.add_argument("--branch", help="only this branch")
+    p = b.cmd(grants, "remove", "take a team's grant in a project or branch away", commands.teams_grants_remove)
+    p.add_argument("team", help="the team's id or name")
+    p.add_argument("project", help="the project's id")
+    p.add_argument("--branch", help="only this branch")
 
     p = b.cmd(top, "completion", "print a shell completion script", lambda ctx: completion.run(ctx, b.root))
     p.add_argument("shell", choices=("bash", "zsh", "fish"))

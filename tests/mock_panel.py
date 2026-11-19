@@ -77,6 +77,9 @@ class State:
     nonces: set[str] = field(default_factory=set)
     domains: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     own_resources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    teams: dict[str, dict[str, Any]] = field(default_factory=dict)
+    access: dict[str, dict[str, Any]] = field(default_factory=dict)
+    teams_on_plan: bool = True  # the plan has the premium teams feature
     rate_limit_next: int = 0  # answer this many coming requests with 429
     events_status: int | None = None  # refuse the event stream with this status
     fail_jobs: bool = False
@@ -137,6 +140,42 @@ def default_state() -> State:
         }
     ]
     return state
+
+
+ACCOUNTS = {"sam": "Sam Lee", "ana": "Ana Diaz", "omar": "Omar Haddad"}
+
+
+def team_out(state: State, team: dict[str, Any]) -> dict[str, Any]:
+    """A team as GET /teams answers it: members with their names and roles, the projects that name it."""
+    named = any(
+        g["type"] == "team" and g["id"] == team["id"]
+        for a in state.access.values()
+        for g in [*a["grants"], *(g for b in a["branches"].values() for g in b["grants"])]
+    )
+    return {
+        **team,
+        "members": [{"name": m, "display_name": ACCOUNTS[m], "role": "developer"} for m in team["members"]],
+        "projects": [{"id": "sales", "name": "sales"}] if named else [],
+        "created_at": "2026-11-12T08:00:00Z",
+        "created_by": "sam",
+        "changed_at": None,
+        "changed_by": None,
+    }
+
+
+def access_out(state: State, project_id: str) -> dict[str, Any]:
+    access = state.access.get(project_id, {"mode": "panel_roles", "grants": [], "branches": {}})
+
+    def named(grants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{**g, "name": (state.teams.get(g["id"]) or {}).get("name")} for g in grants]
+
+    return {
+        "mode": access["mode"],
+        "grants": named(access["grants"]),
+        "branches": {k: {**v, "grants": named(v["grants"])} for k, v in access["branches"].items()},
+        "locks": {},
+        "levels": ["none", "view", "developer", "maintainer", "admin"],
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -605,6 +644,61 @@ def route(h: Handler, method: str, path: str, query: dict[str, list[str]], body:
                     {"verify": "Verify off-site copy", "restore": "Restore off-site copy"}[action],
                 )
             )
+        case ("GET", ["teams"]):
+            h.ok([team_out(state, t) for t in state.teams.values()])
+        case ("GET", ["teams", team_id]):
+            if team_id not in state.teams:
+                raise Problem(404, "This team does not exist.")
+            h.ok(team_out(state, state.teams[team_id]))
+        case ("POST", ["teams"]):
+            if not state.teams_on_plan:
+                raise Problem(403, "Teams are part of the Pro and Business plans.")
+            name = str(body.get("name") or "").strip()
+            if any(t["name"].casefold() == name.casefold() for t in state.teams.values()):
+                raise Problem(409, f"There is a team called {name} already.")
+            unknown = [m for m in body.get("members") or [] if m not in ACCOUNTS]
+            if unknown:
+                raise Problem(400, f"There is no account {unknown[0]}.")
+            team_id = name.lower().replace(" ", "-")
+            state.teams[team_id] = {
+                "id": team_id,
+                "name": name,
+                "description": body.get("description") or "",
+                "members": sorted(body.get("members") or []),
+            }
+            h.ok(team_out(state, state.teams[team_id]), status=201, headers={"Location": f"/api/v1/teams/{team_id}"})
+        case ("PATCH", ["teams", team_id]):
+            if team_id not in state.teams:
+                raise Problem(404, "This team does not exist.")
+            team = state.teams[team_id]
+            adds = set(body.get("members") or []) - set(team["members"])
+            if not state.teams_on_plan and ("name" in body or "description" in body or adds):
+                raise Problem(403, "Teams are part of the Pro and Business plans.")
+            unknown = [m for m in body.get("members") or [] if m not in ACCOUNTS]
+            if unknown:
+                raise Problem(400, f"There is no account {unknown[0]}.")
+            for key in ("name", "description", "members"):
+                if key in body:
+                    team[key] = sorted(body[key]) if key == "members" else body[key]
+            h.ok(team_out(state, team))
+        case ("DELETE", ["teams", team_id]):
+            if state.teams.pop(team_id, None) is None:
+                raise Problem(404, "This team does not exist.")
+            h._send(204)
+        case ("GET", ["projects", project_id, "access"]):
+            if project_id != "sales":
+                raise Problem(404, "No such project.")
+            h.ok(access_out(state, project_id))
+        case ("PUT", ["projects", project_id, "access"]):
+            if project_id != "sales":
+                raise Problem(404, "No such project.")
+            for grant in [*body["grants"], *(g for b in body["branches"].values() for g in b["grants"])]:
+                if set(grant) != {"type", "id", "level"}:
+                    raise Problem(400, "A grant is {type, id, level}.")
+                if grant["type"] == "team" and grant["id"] not in state.teams:
+                    raise Problem(400, f"There is no team {grant['id']}.")
+            state.access[project_id] = {"mode": body["mode"], "grants": body["grants"], "branches": body["branches"]}
+            h.ok(access_out(state, project_id))
         case ("GET", ["users"]):
             h.ok(
                 [
