@@ -3,7 +3,7 @@
 All notable changes to `sudoo-cli` are listed here. The format follows [Keep a Changelog](https://keepachangelog.com),
 and the project uses [semantic versioning](https://semver.org). Its version follows the panel's major version.
 
-## Unreleased
+## 3.0.1 - 2026-11-19
 
 ### Added
 
@@ -13,8 +13,6 @@ and the project uses [semantic versioning](https://semver.org). Its version foll
   Business); the help says so. `--json` and the usual exit codes apply.
 
 ### Changed
-
-- Version 3.0.1.
 
 - The README and the guide link to the package on PyPI, and the README shows `pip install sudoo-cli` too.
 
