@@ -9,6 +9,8 @@ and the project uses [semantic versioning](https://semver.org). Its version foll
 
 - Formatting and lint setup: black, ruff and mypy now run on every commit with pre-commit, and an `.editorconfig` is
   added. The existing code is unchanged. No behaviour change.
+- Docstrings on every module, class, function and method (Google style), and ruff's docstring rules (`D`) so new
+  code keeps them. Code is unchanged (checked by comparing the syntax trees with docstrings removed).
 
 ## 3.0.1 - 2026-11-19
 

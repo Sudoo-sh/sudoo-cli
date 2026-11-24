@@ -11,10 +11,25 @@ import tempfile
 import zipapp
 from pathlib import Path
 
+# The root folder of the repository.
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def build(target: Path) -> Path:
+    """Build the zipapp.
+
+    Copies the package into a temporary folder, adds a small __main__.py and packs the folder into one executable
+    file that starts with "#!/usr/bin/env python3".
+
+    Args:
+        target: The file to write; its folder is created when missing.
+
+    Returns:
+        The path of the finished file.
+
+    Side effects:
+        Writes the file and sets its mode to 0755.
+    """
     with tempfile.TemporaryDirectory() as folder:
         staging = Path(folder)
         shutil.copytree(ROOT / "src" / "sudoo_cli", staging / "sudoo_cli", ignore=shutil.ignore_patterns("__pycache__"))

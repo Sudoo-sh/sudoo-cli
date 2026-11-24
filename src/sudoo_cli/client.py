@@ -23,36 +23,73 @@ from .config import Profile
 from .errors import NETWORK, RATE_LIMITED, USAGE, ApiError, CliError
 from .signing import sign
 
+# The path every API call starts with.
 API = "/api/v1"
+# The longest wait, in seconds, accepted for one Retry-After answer. A longer request is reported as an error.
 MAX_RETRY_WAIT = 300.0  # never sleep longer than this for one Retry-After
+# Header names (lower case) whose values are hidden in --debug output.
 REDACTED = ("authorization", "x-sudoo-signature", "cookie", "set-cookie")
 
 
 @dataclass
 class Response:
+    """An answer from the panel.
+
+    Attributes:
+        status: The HTTP status code.
+        headers: The response headers.
+        body: The raw response body.
+    """
+
     status: int
     headers: dict[str, str]
     body: bytes
     _json: Any = field(default=None, repr=False)
 
     def json(self) -> Any:
+        """The body parsed as JSON (an empty object when the body is empty). The result is kept for the next call.
+
+        Returns:
+            The parsed body.
+
+        Raises:
+            ValueError: When the body is not valid JSON.
+        """
         if self._json is None:
             self._json = json.loads(self.body) if self.body else {}
         return self._json
 
     @property
     def data(self) -> Any:
+        """The "data" part of the answer, or the whole answer when it is not an object.
+
+        Returns:
+            The data.
+        """
         payload = self.json()
         return payload.get("data") if isinstance(payload, dict) else payload
 
     @property
     def meta(self) -> dict[str, Any]:
+        """The "meta" part of the answer (paging counts and similar).
+
+        Returns:
+            The meta object; an empty dict when there is none.
+        """
         payload = self.json()
         meta = payload.get("meta") if isinstance(payload, dict) else None
         return meta if isinstance(meta, dict) else {}
 
 
 def _loopback(host: str) -> bool:
+    """Tell whether a host name or address is this machine.
+
+    Args:
+        host: A host name or IP address.
+
+    Returns:
+        True for localhost, *.localhost and loopback addresses.
+    """
     if host == "localhost" or host.endswith(".localhost"):
         return True
     try:
@@ -62,7 +99,18 @@ def _loopback(host: str) -> bool:
 
 
 def check_url(url: str) -> str:
-    """The panel's address: https, or http only on this machine (never send a token in clear over a network)."""
+    """The panel's address: https, or http only on this machine (never send a token in clear over a network).
+
+    Args:
+        url: The address as given.
+
+    Returns:
+        The address without a trailing slash.
+
+    Raises:
+        CliError: With exit code USAGE when it is not an http(s) address, uses http on another host, or has a query
+            or fragment.
+    """
     parsed = urllib.parse.urlsplit(url.strip())
     if parsed.scheme not in ("https", "http") or not parsed.hostname:
         raise CliError(f"Not a panel address: {url!r}. Give it like https://panel.example.com", USAGE)
@@ -74,6 +122,14 @@ def check_url(url: str) -> str:
 
 
 def retry_after_seconds(value: str | None) -> float | None:
+    """Read a Retry-After header.
+
+    Args:
+        value: The header value: a number of seconds or an HTTP date. None when the header is missing.
+
+    Returns:
+        Seconds to wait (never negative), or None when there is no usable value.
+    """
     if not value:
         return None
     try:
@@ -84,6 +140,14 @@ def retry_after_seconds(value: str | None) -> float | None:
 
 
 def redact_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Hide the secret headers (see `REDACTED`) for debug output.
+
+    Args:
+        headers: The request headers.
+
+    Returns:
+        A copy with "<redacted>" in place of the secret values.
+    """
     return {k: ("<redacted>" if k.lower() in REDACTED else v) for k, v in headers.items()}
 
 
@@ -91,10 +155,27 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Never follow a redirect: the signature covers the path, and the token must not go to another host."""
 
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        """Refuse every redirect.
+
+        Returns:
+            Always None, so the redirect answer is raised as an error.
+        """
         return None
 
 
 class Client:
+    """Signed calls to one panel.
+
+    Attributes:
+        profile: The profile (address and credentials) in use.
+        base: The checked panel address.
+        timeout: Seconds to wait for one request.
+        retries: How many times a 429 answer is retried.
+        debug: When True requests are described on `log`.
+        log: Where debug and retry messages go (stderr by default).
+        sleep: The function used to wait; tests replace it.
+    """
+
     def __init__(
         self,
         profile: Profile,
@@ -105,6 +186,19 @@ class Client:
         log: IO[str] | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
+        """Prepare the client: check the address and set up TLS.
+
+        Args:
+            profile: The profile to use.
+            timeout: Seconds to wait for one request.
+            retries: How many times to retry after a 429 answer.
+            debug: When True, describe every request and answer on `log` (secrets hidden).
+            log: The stream for messages; stderr when None.
+            sleep: A replacement for `time.sleep`, for tests.
+
+        Raises:
+            CliError: When the address is not allowed or the CA certificate cannot be used (exit code USAGE).
+        """
         self.profile = profile
         self.base = check_url(profile.url)
         self.timeout = timeout
@@ -124,6 +218,11 @@ class Client:
     # -- low level -----------------------------------------------------------------------------------------------
 
     def _debug(self, text: str) -> None:
+        """Print a debug line when --debug is on.
+
+        Args:
+            text: The line, without the "debug:" prefix.
+        """
         if self.debug:
             print(f"debug: {text}", file=self.log)
 
@@ -136,7 +235,27 @@ class Client:
         extra: dict[str, str] | None = None,
         timeout: float | None = None,
     ) -> http.client.HTTPResponse:
-        """Send one signed request (retrying 429 after Retry-After); returns the open response."""
+        """Send one signed request (retrying 429 after Retry-After); returns the open response.
+
+        Each attempt is signed again, with a new timestamp and nonce.
+
+        Args:
+            method: The HTTP method.
+            path: The path with the query string, starting with /api/v1.
+            body: A value sent as JSON, or None for no body.
+            extra: Headers that are added or replace the standard ones.
+            timeout: Seconds to wait; the client's timeout when None.
+
+        Returns:
+            The open response. The caller reads and closes it.
+
+        Raises:
+            ApiError: When the panel answers with an error status.
+            CliError: With exit code NETWORK when the panel cannot be reached.
+
+        Side effects:
+            Network call. Prints a note to the log and waits when a 429 answer is retried.
+        """
         data = b"" if body is None else json.dumps(body, separators=(",", ":")).encode()
         attempt = 0
         while True:
@@ -186,6 +305,21 @@ class Client:
             return response
 
     def request(self, method: str, path: str, body: Any = None, query: dict[str, Any] | None = None) -> Response:
+        """Make a call and read the whole answer.
+
+        Args:
+            method: The HTTP method.
+            path: The path below /api/v1, for example "/instances".
+            body: A value sent as JSON, or None.
+            query: Query parameters. None and empty values are left out, booleans become 1 or 0.
+
+        Returns:
+            The `Response`.
+
+        Raises:
+            ApiError: When the panel answers with an error status.
+            CliError: When the panel cannot be reached.
+        """
         full = API + path + _query(query)
         with self._open(method, full, body) as response:
             try:
@@ -197,13 +331,40 @@ class Client:
     # -- conveniences --------------------------------------------------------------------------------------------
 
     def get(self, path: str, **query: Any) -> Response:
+        """GET a path with query parameters.
+
+        Args:
+            path: The path below /api/v1.
+            **query: The query parameters.
+
+        Returns:
+            The `Response`.
+        """
         return self.request("GET", path, query=query)
 
     def post(self, path: str, body: Any = None) -> Response:
+        """POST a path with a JSON body.
+
+        Args:
+            path: The path below /api/v1.
+            body: The JSON body; an empty object when None.
+
+        Returns:
+            The `Response`.
+        """
         return self.request("POST", path, {} if body is None else body)
 
     def paged(self, path: str, page: int = 100, **query: Any) -> list[Any]:
-        """Every item of a list that has meta.total (follows limit/offset)."""
+        """Every item of a list that has meta.total (follows limit/offset).
+
+        Args:
+            path: The path of the list.
+            page: How many items to ask for at a time.
+            **query: More query parameters.
+
+        Returns:
+            All the items.
+        """
         found: list[Any] = []
         while True:
             response = self.get(path, limit=page, offset=len(found), **query)
@@ -214,6 +375,16 @@ class Client:
                 return found
 
     def download(self, path: str, out: IO[bytes], progress: Callable[[int], None] | None = None) -> int:
+        """Save the answer of a GET call into a file object, in chunks.
+
+        Args:
+            path: The path below /api/v1.
+            out: A binary file object to write to.
+            progress: Called with the number of bytes saved so far, after each chunk.
+
+        Returns:
+            The number of bytes saved.
+        """
         size = 0
         with self._open("GET", API + path, timeout=self.timeout) as response:
             while chunk := response.read(1 << 16):
@@ -230,6 +401,14 @@ class Client:
 
         The panel sends a ':' comment every 20 seconds, so a read that waits longer than `read_timeout` means the
         connection is gone (TimeoutError); the caller decides whether to reconnect.
+
+        Args:
+            topics: The event topics to subscribe to; all when None.
+            last_event_id: The id of the last event seen, to continue after it.
+            read_timeout: Seconds a single read may wait.
+
+        Returns:
+            The open response, to be used as a context manager.
         """
         path = API + "/events" + _query({"topics": ",".join(topics) if topics else None})
         extra = {"Accept": "text/event-stream"}
@@ -238,11 +417,24 @@ class Client:
         return self._open("GET", path, extra=extra, timeout=read_timeout)
 
     def events(self, topics: list[str] | None = None, last_event_id: str | None = None) -> Iterator[dict[str, Any]]:
+        """Read events from the live stream until it ends.
+
+        Args:
+            topics: The event topics to subscribe to; all when None.
+            last_event_id: The id of the last event seen, to continue after it.
+
+        Yields:
+            Each event, as `parse_events` shows it.
+        """
         with self.open_events(topics, last_event_id) as response:
             yield from parse_events(response)
 
     def healthz(self) -> bool:
-        """The panel's public health check (no signature)."""
+        """The panel's public health check (no signature).
+
+        Returns:
+            True when /healthz answers with a 2xx status; False on any other answer or when it cannot be reached.
+        """
         request = urllib.request.Request(  # noqa: S310  https (http on loopback) only
             self.base + "/healthz", headers={"User-Agent": f"sudoo-cli/{__version__}"}
         )
@@ -254,7 +446,15 @@ class Client:
 
 
 def parse_events(lines: Iterator[bytes] | IO[bytes]) -> Iterator[dict[str, Any]]:
-    """Server-Sent Events as {"id", "event", "key", "data"}; the panel sends `data` as {"key", "data"}."""
+    """Server-Sent Events as {"id", "event", "key", "data"}; the panel sends `data` as {"key", "data"}.
+
+    Args:
+        lines: The stream, as an iterator or file of byte lines.
+
+    Yields:
+        One dict per event. "event" is "message" when the stream gives no name. Comment lines (starting with ":") are
+        ignored. When the data is not JSON, it is an empty dict.
+    """
     event: dict[str, str] = {}
     for raw in lines:
         line = raw.decode("utf-8", "replace").rstrip("\r\n")
@@ -279,6 +479,14 @@ def parse_events(lines: Iterator[bytes] | IO[bytes]) -> Iterator[dict[str, Any]]
 
 
 def _query(query: dict[str, Any] | None) -> str:
+    """Make a query string.
+
+    Args:
+        query: The parameters; None and empty values are left out, booleans become "1" or "0".
+
+    Returns:
+        The text starting with "?", or an empty text when there is nothing to send.
+    """
     items = {k: v for k, v in (query or {}).items() if v is not None and v != ""}
     for key, value in items.items():
         if isinstance(value, bool):
@@ -287,6 +495,17 @@ def _query(query: dict[str, Any] | None) -> str:
 
 
 def _problem(payload: bytes, status: int, reason: Any) -> dict[str, Any]:
+    """Make a problem detail object from an error answer.
+
+    Args:
+        payload: The raw body of the answer.
+        status: The HTTP status code.
+        reason: The HTTP reason phrase, used as the title when the body is not a JSON object.
+
+    Returns:
+        The JSON object when the body is one. Otherwise a small object with a title, the status and, when the body
+        is short plain text, a detail.
+    """
     try:
         problem = json.loads(payload)
         if isinstance(problem, dict):
@@ -301,6 +520,15 @@ def _problem(payload: bytes, status: int, reason: Any) -> dict[str, Any]:
 
 
 def _network_error(base: str, reason: Any) -> CliError:
+    """Describe a failure to reach the panel.
+
+    Args:
+        base: The panel address.
+        reason: The exception or text that caused the failure.
+
+    Returns:
+        A `CliError` with exit code NETWORK. It has a special message for certificate errors and for timeouts.
+    """
     if isinstance(reason, ssl.SSLCertVerificationError):
         return CliError(
             f"The TLS certificate of {base} could not be verified ({reason.verify_message}). "
@@ -313,7 +541,15 @@ def _network_error(base: str, reason: Any) -> CliError:
 
 
 def quote(part: str, keep_slash: bool = False) -> str:
-    """One part of a path (an instance name, a branch that may contain '/', a file name)."""
+    """One part of a path (an instance name, a branch that may contain '/', a file name), made safe for a URL.
+
+    Args:
+        part: The text to encode.
+        keep_slash: When True, "/" is kept as it is (for branch names).
+
+    Returns:
+        The encoded text.
+    """
     return urllib.parse.quote(part, safe="/" if keep_slash else "")
 
 
