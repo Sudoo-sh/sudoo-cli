@@ -3,6 +3,13 @@
 All notable changes to `sudoo-cli` are listed here. The format follows [Keep a Changelog](https://keepachangelog.com),
 and the project uses [semantic versioning](https://semver.org). Its version follows the panel's major version.
 
+## [Unreleased]
+
+### Changed
+
+- Formatting and lint setup: black, ruff and mypy now run on every commit with pre-commit, and an `.editorconfig` is
+  added. The existing code is unchanged. No behaviour change.
+
 ## 3.0.1 - 2026-11-19
 
 ### Added

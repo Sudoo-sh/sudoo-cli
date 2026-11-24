@@ -86,6 +86,12 @@ Releases: bump the version in `pyproject.toml` and `src/sudoo_cli/__init__.py`, 
 tag `vX.Y.Z` and push the tag; the publish workflow tests, builds, publishes to PyPI (Trusted Publishing) and
 creates the GitHub release with `sudoo.pyz`.
 
+### Formatting
+
+Code is formatted with black and linted with ruff (settings in `pyproject.toml`; ruff also sorts imports), and mypy
+checks the types. Run `uv run black .` to rewrite files and `uv run black --check .` to check them without changes.
+The same checks run on every commit with pre-commit (run `uvx pre-commit install` once).
+
 ## Licence
 
 [Apache License 2.0](LICENSE.md). "Sudoo" and "Sudoo.sh" are trademarks of the copyright holder.
