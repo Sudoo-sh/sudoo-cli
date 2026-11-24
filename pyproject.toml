@@ -47,6 +47,10 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "sudoo_cli"
 
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"
@@ -78,6 +82,7 @@ addopts = "-q"
 
 [dependency-groups]
 dev = [
+    "black>=26.10.1",
     "mypy>=1.18.0",
     "pytest>=8.4.0",
     "ruff>=0.13.0",
