@@ -57,12 +57,16 @@ target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-# pycodestyle, pyflakes, import order, bugbear, modern syntax, simplifications, security
-select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "S", "RUF"]
+# pycodestyle, pyflakes, import order, bugbear, modern syntax, simplifications, security, docstrings
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "S", "RUF", "D"]
 ignore = ["E501"]  # the formatter decides line length
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106"]  # assert and fixed test values
+"tests/**" = ["S101", "S105", "S106", "D417"]  # assert and fixed test values; no parameter sections in tests
+
+[tool.ruff.lint.pydocstyle]
+# Every module, class, function and method needs a docstring, in Google style.
+convention = "google"
 
 [tool.ruff.lint.isort]
 known-first-party = ["sudoo_cli"]

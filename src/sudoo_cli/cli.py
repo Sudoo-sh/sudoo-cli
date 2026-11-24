@@ -1,4 +1,8 @@
-"""The `sudoo` command line: options, sub-commands and the exit code."""
+"""The `sudoo` command line: options, sub-commands and the exit code.
+
+`build_parser` defines every command and option and connects each to a handler in commands.py. `main` parses
+the arguments, runs the handler and turns errors into messages and exit codes.
+"""
 
 from __future__ import annotations
 
@@ -12,16 +16,21 @@ from .context import Context
 from .errors import ERROR, INTERRUPTED, OK, CliError
 from .output import emit_json
 
+# The stages of a branch or instance.
 STAGES = ("development", "staging", "production")
+# The Odoo editions.
 EDITIONS = ("community", "enterprise")
+# The statuses an instance can have, used to filter `instances list`.
 STATUSES = ("creating", "online", "starting", "busy", "paused", "switched_off", "stopped", "unknown")
 
+# Help text of the `teams` command group.
 TEAMS_HELP = (
     "teams of accounts and their access to projects and branches. Teams are a premium feature (Pro and Business): "
     "on other plans the panel answers 403 when you create a team, add members or give access; reading, taking "
     "members out, taking access away and deleting always work"
 )
 
+# The text printed at the end of `sudoo --help`: where credentials come from, the exit codes and the documentation.
 EPILOG = """\
 Credentials come from `sudoo login` (a profile) or from SUDOO_URL, SUDOO_TOKEN and SUDOO_SECRET.
 Exit codes: 0 ok, 1 error, 2 usage, 3 not logged in or credentials refused, 4 not allowed, 5 not found,
@@ -30,7 +39,15 @@ Documentation: https://docs.sudoo.sh/cli"""
 
 
 def _globals(defaults: bool) -> argparse.ArgumentParser:
-    """Options accepted before or after the sub-command (`sudoo --json instances list` = `sudoo instances list --json`)."""
+    """Options accepted before or after the sub-command (`sudoo --json instances list` = `sudoo instances list --json`).
+
+    Args:
+        defaults: True for the parser at the top, which sets the default values. False for the copy given to each
+            sub-command, which sets none so that it does not overwrite a value given before the sub-command.
+
+    Returns:
+        A parser with the global options, to be used as a parent parser.
+    """
     p = argparse.ArgumentParser(add_help=False)
     d: Any = None if defaults else argparse.SUPPRESS
     g = p.add_argument_group("global options")
@@ -58,17 +75,32 @@ def _globals(defaults: bool) -> argparse.ArgumentParser:
 
 
 def _job_options(p: argparse.ArgumentParser) -> None:
+    """Add the options of commands that start a job.
+
+    Args:
+        p: The parser of the command.
+    """
     g = p.add_argument_group("job options")
     g.add_argument("--no-wait", action="store_true", help="return once the panel accepted the job")
     g.add_argument("--poll", action="store_true", help="follow the job by polling instead of the live event stream")
     g.add_argument("--wait-timeout", type=float, metavar="SECONDS", help="give up waiting after this long (exit 1)")
 
 
+# A command handler: a function that takes the run `Context` and returns nothing.
 Handler = Callable[[Context], None]
 
 
 class Builder:
+    """Helps to build the tree of commands.
+
+    Attributes:
+        common: Parent parser holding the global options, given to every command.
+        root: The parser of the `sudoo` command.
+        top: The sub-command group at the top level.
+    """
+
     def __init__(self) -> None:
+        """Create the root parser and its top-level sub-command group."""
         self.common = _globals(defaults=False)
         self.root = argparse.ArgumentParser(
             prog="sudoo",
@@ -81,15 +113,45 @@ class Builder:
         self.top = self.root.add_subparsers(dest="command", metavar="COMMAND", required=True)
 
     def group(self, name: str, help_: str) -> Any:
+        """Add a command group such as `projects`.
+
+        Args:
+            name: The group's name.
+            help_: Its help text.
+
+        Returns:
+            The object to add the group's actions to.
+        """
         p = self.top.add_parser(name, help=help_, description=help_)
         return p.add_subparsers(dest="subcommand", metavar="ACTION", required=True)
 
     def subgroup(self, parent: Any, name: str, help_: str) -> Any:
-        """A group inside a group (`sudoo teams members add ...`)."""
+        """A group inside a group (`sudoo teams members add ...`).
+
+        Args:
+            parent: The sub-command object of the outer group.
+            name: The inner group's name.
+            help_: Its help text.
+
+        Returns:
+            The object to add the inner group's actions to.
+        """
         p = parent.add_parser(name, help=help_, description=help_)
         return p.add_subparsers(dest="action", metavar="ACTION", required=True)
 
     def cmd(self, parent: Any, name: str, help_: str, handler: Handler, job: bool = False) -> argparse.ArgumentParser:
+        """Add a command and connect it to its handler.
+
+        Args:
+            parent: The sub-command object to add it to.
+            name: The command's name.
+            help_: Its help text.
+            handler: The function that runs it.
+            job: True when the command starts a job; this adds --no-wait, --poll and --wait-timeout.
+
+        Returns:
+            The command's parser, so that the caller can add the arguments.
+        """
         p: argparse.ArgumentParser = parent.add_parser(name, help=help_, description=help_, parents=[self.common])
         p.set_defaults(handler=handler)
         if job:
@@ -98,6 +160,11 @@ class Builder:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Define the whole command line.
+
+    Returns:
+        The parser of the `sudoo` command, with every command and option.
+    """
     b = Builder()
     top = b.top
 
@@ -349,6 +416,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _odoo_options(p: argparse.ArgumentParser) -> None:
+    """Add the options that choose an Odoo version and edition.
+
+    Args:
+        p: The parser of the command.
+    """
     p.add_argument(
         "--odoo-version", "--version", dest="odoo_version", required=True, metavar="VERSION", help="19.0, 18.0, ..."
     )
@@ -356,6 +428,16 @@ def _odoo_options(p: argparse.ArgumentParser) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the command.
+
+    Args:
+        argv: The arguments, without the program name; sys.argv is used when None.
+
+    Returns:
+        The exit code. Errors are printed to stderr (and as JSON with --json) and mapped to their exit code; Ctrl+C
+        gives INTERRUPTED; a closed pipe is not an error; an unexpected error gives ERROR and is shown without a
+        traceback unless --debug is given.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     ctx = Context(args)

@@ -1,4 +1,7 @@
-"""`python -m sudoo_cli`, and the entry point of the single-file zipapp."""
+"""Entry point for `python -m sudoo_cli` and for the single-file zipapp built by scripts/build_zipapp.py.
+
+Calls `sudoo_cli.cli.main` and exits with the exit code it returns.
+"""
 
 import sys
 

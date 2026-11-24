@@ -14,12 +14,14 @@ from .mock_panel import MockPanel
 
 
 def test_version(run: Run) -> None:
+    """Test: version."""
     result = run("version", "--json")
     assert result.code == 0
     assert result.json()["version"] == __version__ == "3.0.1"
 
 
 def test_status(run: Run) -> None:
+    """Test: status."""
     result = run("status")
     assert result.code == 0
     assert "3.0.0" in result.out
@@ -30,10 +32,12 @@ def test_status(run: Run) -> None:
 
 
 def test_global_options_before_or_after_the_command(run: Run) -> None:
+    """Test: global options before or after the command."""
     assert json.loads(run("--json", "instances", "list").out) == json.loads(run("instances", "list", "--json").out)
 
 
 def test_projects(run: Run, panel: MockPanel) -> None:
+    """Test: projects."""
     result = run("projects", "list")
     assert "acme/sales" in result.out
     assert run("projects", "show", "sales").code == 0
@@ -47,6 +51,7 @@ def test_projects(run: Run, panel: MockPanel) -> None:
 
 
 def test_branches(run: Run, panel: MockPanel) -> None:
+    """Test: branches."""
     result = run("branches", "list", "sales")
     assert "feature/x" in result.out and "(default)" in result.out
     assert run("branches", "set-stage", "sales", "feature/x", "production").code == errors.INVALID
@@ -60,6 +65,7 @@ def test_branches(run: Run, panel: MockPanel) -> None:
 
 
 def test_instances_list_show_and_filters(run: Run) -> None:
+    """Test: instances list show and filters."""
     listed = run("instances", "list", "--json").json()
     assert {i["name"] for i in listed} == {"sales-main", "sales-dev", "shop"}
     staging = run("instances", "list", "--stage", "staging", "--json").json()
@@ -70,6 +76,7 @@ def test_instances_list_show_and_filters(run: Run) -> None:
 
 
 def test_instances_create_follows_the_job(run: Run, panel: MockPanel) -> None:
+    """Test: instances create follows the job."""
     result = run(
         "instances",
         "create",
@@ -100,6 +107,7 @@ def test_instances_create_follows_the_job(run: Run, panel: MockPanel) -> None:
 
 
 def test_a_refused_value_shows_the_problem_detail(run: Run) -> None:
+    """Test: a refused value shows the problem detail."""
     result = run("instances", "create", "--version", "12.0")
     assert result.code == errors.INVALID
     assert "Choose an Odoo version from the list." in result.err
@@ -108,17 +116,20 @@ def test_a_refused_value_shows_the_problem_detail(run: Run) -> None:
 
 @pytest.mark.parametrize("command", ["start", "restart", "pause", "stop"])
 def test_instance_actions(run: Run, panel: MockPanel, command: str) -> None:
+    """Test: instance actions."""
     assert run("instances", command, "sales-dev").code == 0
     action = {"stop": "switch-off"}.get(command, command)
     assert any(r["path"] == f"/api/v1/instances/sales-dev/actions/{action}" for r in panel.state.requests)
 
 
 def test_production_needs_confirmation(run: Run) -> None:
+    """Test: production needs confirmation."""
     assert run("instances", "pause", "sales-main").code == errors.INVALID
     assert run("instances", "pause", "sales-main", "--confirm-production").code == 0
 
 
 def test_delete_asks_and_sends_the_confirmation(run: Run, panel: MockPanel) -> None:
+    """Test: delete asks and sends the confirmation."""
     assert run("instances", "delete", "sales-dev").code == errors.USAGE  # not a terminal and no --yes
     assert run("instances", "delete", "sales-dev", "--yes").code == 0
     deletion = next(r for r in panel.state.requests if r["method"] == "DELETE")
@@ -128,17 +139,24 @@ def test_delete_asks_and_sends_the_confirmation(run: Run, panel: MockPanel) -> N
 
 
 def test_instances_set(run: Run, panel: MockPanel) -> None:
+    """Test: instances set."""
     assert run("instances", "set", "sales-dev").code == errors.USAGE
     assert run("instances", "set", "sales-dev", "--delete-after-days", "14", "--no-auto-pause").code == 0
     assert json.loads(panel.state.requests[-1]["body"]) == {"auto_pause": False, "delete_after_days": 14}
 
 
 def test_logs_and_follow(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test: logs and follow."""
     result = run("instances", "logs", "sales-dev", "-n", "3")
     assert result.out.count("line") == 3
     calls = {"n": 0}
 
     def stop_after_two(seconds: float) -> None:
+        """Count the waits and raise KeyboardInterrupt on the third, to end `--follow`.
+
+        Args:
+            seconds: The wait asked for (ignored).
+        """
         calls["n"] += 1
         if calls["n"] > 2:
             raise KeyboardInterrupt
@@ -150,6 +168,7 @@ def test_logs_and_follow(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_new_lines_of_a_moving_tail() -> None:
+    """Test: new lines of a moving tail."""
     from sudoo_cli.commands import new_lines
 
     assert new_lines(["a", "b", "c"], ["b", "c", "d", "e"]) == ["d", "e"]
@@ -158,11 +177,13 @@ def test_new_lines_of_a_moving_tail() -> None:
 
 
 def test_open_prints_the_address(run: Run) -> None:
+    """Test: open prints the address."""
     result = run("instances", "open", "sales-dev", "--print")
     assert result.out.strip() == "https://sales-dev.example.com"
 
 
 def test_deploy_an_instance_and_a_branch(run: Run, panel: MockPanel) -> None:
+    """Test: deploy an instance and a branch."""
     assert run("deploy", "sales-dev").code == 0
     assert run("deploy", "--project", "sales", "--branch", "feature/x").code == 0
     updates = [r["path"] for r in panel.state.requests if r["path"].endswith("/actions/update")]
@@ -172,6 +193,7 @@ def test_deploy_an_instance_and_a_branch(run: Run, panel: MockPanel) -> None:
 
 
 def test_backups(run: Run, panel: MockPanel, tmp_path: Path) -> None:
+    """Test: backups."""
     listed = run("backups", "list", "--instance", "shop", "--json").json()
     assert [b["instance"] for b in listed] == ["shop"]
     assert "c1" in run("backups", "list", "--offsite").out
@@ -193,6 +215,7 @@ def test_backups(run: Run, panel: MockPanel, tmp_path: Path) -> None:
 
 
 def test_domains(run: Run, panel: MockPanel) -> None:
+    """Test: domains."""
     assert "erp.acme.com" in run("domains", "list", "sales-main").out
     assert run("domains", "add", "sales-dev", "shop.acme.com").code == 0
     status = run("domains", "status", "sales-dev", "shop.acme.com", "--json").json()
@@ -203,18 +226,21 @@ def test_domains(run: Run, panel: MockPanel) -> None:
 
 
 def test_shell_points_to_the_panel(run: Run, panel: MockPanel) -> None:
+    """Test: shell points to the panel."""
     result = run("shell", "sales-dev")
     assert result.code == errors.FORBIDDEN
     assert f"{panel.url}/i/sales-dev/shell" in result.err
 
 
 def test_mail(run: Run) -> None:
+    """Test: mail."""
     assert "Your order" in run("mail", "list", "sales-dev").out
     assert run("mail", "list", "sales-main").code == errors.CONFLICT
     assert "Thank you." in run("mail", "show", "sales-dev", "m1").out
 
 
 def test_resources(run: Run, panel: MockPanel) -> None:
+    """Test: resources."""
     assert "odoo_workers" in run("resources", "show", "sales-dev").out
     assert run("resources", "set", "sales-dev", "odoo_workers=4", "odoo_memory_limit=4g").code == 0
     assert panel.state.own_resources["sales-dev"] == {"odoo_workers": 4, "odoo_memory_limit": "4g"}
@@ -224,6 +250,7 @@ def test_resources(run: Run, panel: MockPanel) -> None:
 
 
 def test_jobs(run: Run) -> None:
+    """Test: jobs."""
     started = run("instances", "restart", "sales-dev", "--no-wait", "--json").json()
     assert started["status"] == "queued"
     assert started["id"] in run("jobs", "list").out
@@ -234,11 +261,13 @@ def test_jobs(run: Run) -> None:
 
 
 def test_users_and_roles(run: Run) -> None:
+    """Test: users and roles."""
     assert "sam@example.com" in run("users", "list").out
     assert "Administrator" in run("users", "roles").out
 
 
 def test_teams(run: Run, panel: MockPanel) -> None:
+    """Test: teams."""
     assert "No teams." in run("teams", "list").out
     made = run("teams", "create", "Sales devs", "--description", "The sales team", "--member", "sam", "--json")
     assert made.code == 0 and made.json()["id"] == "sales-devs"
@@ -291,11 +320,13 @@ def test_teams(run: Run, panel: MockPanel) -> None:
 
 @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
 def test_completion(run: Run, shell: str) -> None:
+    """Test: completion."""
     script = run("completion", shell).out
     assert "instances" in script and "set-stage" in script
 
 
 def test_the_zipapp_runs(tmp_path: Path) -> None:
+    """Test: the zipapp runs."""
     import subprocess
     import sys
 

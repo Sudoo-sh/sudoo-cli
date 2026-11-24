@@ -20,10 +20,19 @@ from .mock_panel import READ_TOKEN, SECRET, TOKEN, MockPanel
 
 
 def _job_reads(panel: MockPanel) -> int:
+    """Count the requests that read a job (GET /api/v1/jobs/<id>).
+
+    Args:
+        panel: The mock panel.
+
+    Returns:
+        The number of such requests so far.
+    """
     return sum(1 for r in panel.state.requests if r["method"] == "GET" and r["path"].startswith("/api/v1/jobs/"))
 
 
 def test_every_request_is_signed_and_accepted(run: Run, panel: MockPanel) -> None:
+    """Test: every request is signed and accepted."""
     assert run("instances", "list").code == 0
     request = panel.state.requests[-1]
     assert request["headers"]["Authorization"] == f"Bearer {TOKEN}"
@@ -32,12 +41,14 @@ def test_every_request_is_signed_and_accepted(run: Run, panel: MockPanel) -> Non
 
 
 def test_acting_for_is_sent_and_signed(run: Run, panel: MockPanel) -> None:
+    """Test: acting for is sent and signed."""
     assert run("instances", "list", "--acting-for", "sara@example.com").code == 0
     assert panel.state.requests[-1]["headers"]["X-Sudoo-Acting-For"] == "sara@example.com"
     assert run("instances", "list", "--acting-for", "not valid").code == errors.USAGE
 
 
 def test_a_wrong_secret_is_refused(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test: a wrong secret is refused."""
     monkeypatch.setenv("SUDOO_SECRET", "wrong")
     result = run("instances", "list")
     assert result.code == errors.AUTH
@@ -45,6 +56,7 @@ def test_a_wrong_secret_is_refused(run: Run, monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_a_read_token_cannot_change_anything(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test: a read token cannot change anything."""
     monkeypatch.setenv("SUDOO_TOKEN", READ_TOKEN)
     assert run("instances", "list").code == 0
     result = run("instances", "restart", "sales-dev", "--json")
@@ -53,6 +65,7 @@ def test_a_read_token_cannot_change_anything(run: Run, monkeypatch: pytest.Monke
 
 
 def test_429_waits_and_retries_with_a_new_nonce(run: Run, panel: MockPanel) -> None:
+    """Test: 429 waits and retries with a new nonce."""
     panel.state.rate_limit_next = 2
     result = run("instances", "list")
     assert result.code == 0
@@ -62,11 +75,13 @@ def test_429_waits_and_retries_with_a_new_nonce(run: Run, panel: MockPanel) -> N
 
 
 def test_429_gives_up_after_the_retries(run: Run, panel: MockPanel) -> None:
+    """Test: 429 gives up after the retries."""
     panel.state.rate_limit_next = 10
     assert run("instances", "list").code == errors.RATE_LIMITED
 
 
 def test_jobs_are_followed_live_through_the_event_stream(run: Run, panel: MockPanel) -> None:
+    """Test: jobs are followed live through the event stream."""
     result = run("instances", "restart", "sales-dev")
     assert result.code == 0
     assert any(r["path"] == "/api/v1/events?topics=job" for r in panel.state.requests)
@@ -76,6 +91,7 @@ def test_jobs_are_followed_live_through_the_event_stream(run: Run, panel: MockPa
 
 
 def test_jobs_fall_back_to_polling(run: Run, panel: MockPanel) -> None:
+    """Test: jobs fall back to polling."""
     panel.state.events_status = 403  # an `instances` token may not open the stream
     assert run("instances", "restart", "sales-dev").code == 0
     assert _job_reads(panel) >= 2
@@ -87,6 +103,7 @@ def test_jobs_fall_back_to_polling(run: Run, panel: MockPanel) -> None:
 
 
 def test_a_failed_job_exits_11_with_its_error(run: Run, panel: MockPanel) -> None:
+    """Test: a failed job exits 11 with its error."""
     panel.state.fail_jobs = True
     result = run("deploy", "sales-dev")
     assert result.code == errors.JOB_FAILED
@@ -96,6 +113,7 @@ def test_a_failed_job_exits_11_with_its_error(run: Run, panel: MockPanel) -> Non
 
 
 def test_debug_never_shows_secrets(run: Run) -> None:
+    """Test: debug never shows secrets."""
     result = run("instances", "list", "--debug")
     assert "debug: > GET /api/v1/instances" in result.err
     assert TOKEN not in result.err and SECRET not in result.err
@@ -103,6 +121,7 @@ def test_debug_never_shows_secrets(run: Run) -> None:
 
 
 def test_redact_headers() -> None:
+    """Test: redact headers."""
     assert redact_headers({"Authorization": "Bearer x", "X-Sudoo-Signature": "sha256=y", "X-Sudoo-Nonce": "n"}) == {
         "Authorization": "<redacted>",
         "X-Sudoo-Signature": "<redacted>",
@@ -123,6 +142,7 @@ def test_redact_headers() -> None:
     ],
 )
 def test_check_url(url: str, ok: bool) -> None:
+    """Test: check url."""
     if ok:
         assert check_url(url) == url.rstrip("/")
     else:
@@ -131,12 +151,14 @@ def test_check_url(url: str, ok: bool) -> None:
 
 
 def test_retry_after() -> None:
+    """Test: retry after."""
     assert retry_after_seconds("7") == 7
     assert retry_after_seconds(None) is None
     assert retry_after_seconds("Wed, 21 Oct 2015 07:28:00 GMT") == 0
 
 
 def test_parse_events() -> None:
+    """Test: parse events."""
     stream = io.BytesIO(
         b': keep-alive\n\nid: 4\nevent: job\ndata: {"key": "a1", "data": {"id": "a1"}}\n\nevent: reset\ndata: {}\n\n'
     )
@@ -146,6 +168,7 @@ def test_parse_events() -> None:
 
 
 def test_network_errors_exit_10(run: Run, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test: network errors exit 10."""
     monkeypatch.setenv("SUDOO_URL", "http://127.0.0.1:9")
     result = run("instances", "list")
     assert result.code == errors.NETWORK
@@ -156,6 +179,7 @@ def test_network_errors_exit_10(run: Run, monkeypatch: pytest.MonkeyPatch) -> No
 def test_tls_is_verified_and_a_custom_ca_can_be_trusted(
     run: Run, panel: MockPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Test: tls is verified and a custom ca can be trusted."""
     names = ("ca.key", "ca.pem", "ca.cnf", "s.key", "s.csr", "s.pem", "s.cnf")
     ca_key, ca, ca_cnf, key, csr, cert, leaf_cnf = (tmp_path / n for n in names)
     # Certificates as Python 3.13+ (VERIFY_X509_STRICT) requires them, independent of the system's openssl.cnf.
@@ -223,6 +247,7 @@ def test_tls_is_verified_and_a_custom_ca_can_be_trusted(
 
 
 def test_json_errors_are_machine_readable(run: Run) -> None:
+    """Test: json errors are machine readable."""
     result = run("instances", "show", "ghost", "--json")
     payload = json.loads(result.out)
     assert payload["error"]["status"] == 404

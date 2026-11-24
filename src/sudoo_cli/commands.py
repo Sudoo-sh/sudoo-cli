@@ -22,6 +22,22 @@ from .output import emit_json, fields, get, info, size, table, text, when
 
 
 def login(ctx: Context) -> None:
+    """`sudoo login`: store a panel's address, API token and signing secret in a profile.
+
+    The address comes from --url, then SUDOO_URL, then a question. The token and the secret come from SUDOO_TOKEN and
+    SUDOO_SECRET (or SUDOO_SIGNING_SECRET), else a hidden question. Unless --no-verify is given, the credentials are
+    tried with GET /versions first.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: When a value is missing and there is no terminal to ask in (USAGE), or the panel refuses the
+            credentials.
+
+    Side effects:
+        Writes the profile and the credentials (keyring or private file); prints where they were kept.
+    """
     a = ctx.args
     name = config.profile_name(a.profile)
     url = a.url or os.environ.get("SUDOO_URL") or _ask("Panel address (https://...): ")
@@ -48,6 +64,18 @@ def login(ctx: Context) -> None:
 
 
 def _ask(prompt: str, secret: bool = False) -> str:
+    """Ask for one value in the terminal.
+
+    Args:
+        prompt: The question.
+        secret: When True the answer is not shown while typing.
+
+    Returns:
+        The answer, without surrounding spaces.
+
+    Raises:
+        CliError: With exit code USAGE when there is no terminal or the answer is empty.
+    """
     if not sys.stdin.isatty():
         raise CliError(
             "Not a terminal: give the address with --url and the credentials in SUDOO_TOKEN and SUDOO_SECRET.", USAGE
@@ -59,6 +87,11 @@ def _ask(prompt: str, secret: bool = False) -> str:
 
 
 def logout(ctx: Context) -> None:
+    """`sudoo logout`: forget a profile and its credentials.
+
+    Args:
+        ctx: The run context.
+    """
     name = config.profile_name(ctx.args.profile)
     existed = config.forget(name)
     if ctx.json:
@@ -68,6 +101,11 @@ def logout(ctx: Context) -> None:
 
 
 def profiles(ctx: Context) -> None:
+    """`sudoo profiles`: list the stored profiles, marking the default one.
+
+    Args:
+        ctx: The run context.
+    """
     data = config.load_config()
     default = data.get("default_profile")
     rows = [
@@ -90,6 +128,11 @@ def profiles(ctx: Context) -> None:
 
 
 def version(ctx: Context) -> None:
+    """`sudoo version`: print the version of this command and of Python.
+
+    Args:
+        ctx: The run context.
+    """
     if ctx.json:
         emit_json({"version": __version__, "python": platform.python_version()})
     else:
@@ -97,6 +140,14 @@ def version(ctx: Context) -> None:
 
 
 def status(ctx: Context) -> None:
+    """`sudoo status`: the panel's health, version, licence, usage and limits.
+
+    The quota, capacity and licence parts are skipped (shown as "-") when the token may not read them or the panel
+    has no measurement yet.
+
+    Args:
+        ctx: The run context.
+    """
     c = ctx.client
     healthy = c.healthz()
     server = c.get("/server").data
@@ -138,6 +189,15 @@ def status(ctx: Context) -> None:
 
 
 def _limit(quota: dict[str, Any]) -> str:
+    """Describe the instance limit of the panel as text.
+
+    Args:
+        quota: The answer of /instance-quota; may be empty.
+
+    Returns:
+        For example "3 of 10 instances", with the per-token limit and the next possible creation time when there are
+        any; "-" when there is no quota.
+    """
     if not quota:
         return "-"
     most = quota.get("max_instances") or "no limit"
@@ -151,6 +211,7 @@ def _limit(quota: dict[str, Any]) -> str:
 
 # -- projects and branches ------------------------------------------------------------------------------------------
 
+# Columns of the projects table.
 PROJECT_COLUMNS = [
     ("id", get("id")),
     ("repository", get("repository.full_name")),
@@ -162,6 +223,11 @@ PROJECT_COLUMNS = [
 
 
 def projects_list(ctx: Context) -> None:
+    """`sudoo projects list`: every project.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get("/projects")
     if ctx.json:
         emit_json(response.json())
@@ -170,6 +236,12 @@ def projects_list(ctx: Context) -> None:
 
 
 def projects_show(ctx: Context) -> None:
+    """`sudoo projects show`: a project and its branches.
+
+    Args:
+        ctx: The run context; `ctx.args.project` is the project's id and `ctx.args.refresh` reads the branches from
+            GitHub first.
+    """
     response = ctx.client.get(f"/projects/{quote(ctx.args.project)}", refresh=ctx.args.refresh or None)
     if ctx.json:
         emit_json(response.json())
@@ -192,6 +264,14 @@ def projects_show(ctx: Context) -> None:
 
 
 def projects_create(ctx: Context) -> None:
+    """`sudoo projects create`: create a new, empty GitHub repository and a project for it.
+
+    Args:
+        ctx: The run context.
+
+    Side effects:
+        The panel creates the repository on GitHub.
+    """
     a = ctx.args
     create: dict[str, Any] = {"owner": a.owner, "name": a.repo_name, "private": not a.public}
     if a.description:
@@ -203,6 +283,11 @@ def projects_create(ctx: Context) -> None:
 
 
 def projects_link(ctx: Context) -> None:
+    """`sudoo projects link`: make a project of an existing GitHub repository.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     body: dict[str, Any] = {"repository": a.repository, "odoo_version": a.odoo_version, "edition": a.edition}
     if a.name:
@@ -211,6 +296,12 @@ def projects_link(ctx: Context) -> None:
 
 
 def _project_made(ctx: Context, response: Any) -> None:
+    """Print the project that was made.
+
+    Args:
+        ctx: The run context.
+        response: The panel's answer to the create call.
+    """
     if ctx.json:
         emit_json(response.json())
     else:
@@ -219,6 +310,11 @@ def _project_made(ctx: Context, response: Any) -> None:
 
 
 def _branches_table(branches: list[dict[str, Any]]) -> None:
+    """Print the branches of a project as a table.
+
+    Args:
+        branches: The branch objects of the project.
+    """
     table(
         branches,
         [
@@ -234,6 +330,11 @@ def _branches_table(branches: list[dict[str, Any]]) -> None:
 
 
 def branches_list(ctx: Context) -> None:
+    """`sudoo branches list`: a project's branches.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get(f"/projects/{quote(ctx.args.project)}", refresh=ctx.args.refresh or None)
     branches = response.data.get("branches_list") or []
     if ctx.json:
@@ -243,6 +344,11 @@ def branches_list(ctx: Context) -> None:
 
 
 def branches_set_stage(ctx: Context) -> None:
+    """`sudoo branches set-stage`: move a branch, and its instances, to a stage.
+
+    Args:
+        ctx: The run context. Moving into or out of production needs --confirm-production.
+    """
     a = ctx.args
     body: dict[str, Any] = {"stage": a.stage}
     if a.confirm_production:
@@ -256,6 +362,11 @@ def branches_set_stage(ctx: Context) -> None:
 
 
 def branches_create_instance(ctx: Context) -> None:
+    """`sudoo branches create-instance`: make an instance of a branch, in the branch's stage, and follow the job.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     body: dict[str, Any] = {}
     if a.name:
@@ -270,6 +381,7 @@ def branches_create_instance(ctx: Context) -> None:
 
 # -- instances --------------------------------------------------------------------------------------------------------
 
+# Columns of the instances table.
 INSTANCE_COLUMNS = [
     ("name", get("name")),
     ("status", get("status")),
@@ -282,6 +394,11 @@ INSTANCE_COLUMNS = [
 
 
 def instances_list(ctx: Context) -> None:
+    """`sudoo instances list`: every instance, optionally filtered by project, status and stage.
+
+    Args:
+        ctx: The run context. The filters are applied here, after all instances were read.
+    """
     items = ctx.client.paged("/instances")
     a = ctx.args
     if a.project:
@@ -297,11 +414,25 @@ def instances_list(ctx: Context) -> None:
 
 
 def _instance(ctx: Context, name: str) -> dict[str, Any]:
+    """Read one instance.
+
+    Args:
+        ctx: The run context.
+        name: The instance's name.
+
+    Returns:
+        The instance object.
+    """
     data: dict[str, Any] = ctx.client.get(f"/instances/{quote(name)}").data
     return data
 
 
 def instances_show(ctx: Context) -> None:
+    """`sudoo instances show`: one instance with its usage and any running job.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get(f"/instances/{quote(ctx.args.instance)}")
     if ctx.json:
         emit_json(response.json())
@@ -335,6 +466,11 @@ def instances_show(ctx: Context) -> None:
 
 
 def instances_create(ctx: Context) -> None:
+    """`sudoo instances create`: make a new instance from a repository's branch, or plain Odoo, and follow the job.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     body: dict[str, Any] = {"version": a.odoo_version, "edition": a.edition, "stage": a.stage}
     for key, value in (
@@ -359,6 +495,11 @@ def instance_action(action: str) -> Any:
     """start, pause, restart, stop (switch-off) and the like: POST /instances/<name>/actions/<action>."""
 
     def run(ctx: Context) -> None:
+        """Run the action on the instance named in the arguments and follow the job.
+
+        Args:
+            ctx: The run context. `--confirm-production` is sent when the command has it.
+        """
         body: dict[str, Any] = {}
         if getattr(ctx.args, "confirm_production", False):
             body["confirm_production"] = True
@@ -368,6 +509,16 @@ def instance_action(action: str) -> Any:
 
 
 def instances_delete(ctx: Context) -> None:
+    """`sudoo instances delete`: delete an instance, after a backup, and follow the job.
+
+    The person must type the instance's name to confirm, unless --yes is given.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: When the confirmation is refused (USAGE) or the panel refuses.
+    """
     a = ctx.args
     name = a.instance
     ctx.confirm(f"Delete instance {name} (a backup is taken first)?", expected=name)
@@ -380,6 +531,14 @@ def instances_delete(ctx: Context) -> None:
 
 
 def instances_set(ctx: Context) -> None:
+    """`sudoo instances set`: change an instance's settings or stage.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: With exit code USAGE when no option was given.
+    """
     a = ctx.args
     body: dict[str, Any] = {}
     for key in ("auto_update", "auto_upgrade", "auto_pause", "delete_after_days", "stage"):
@@ -398,6 +557,11 @@ def instances_set(ctx: Context) -> None:
 
 
 def instances_logs(ctx: Context) -> None:
+    """`sudoo instances logs`: print the end of Odoo's log, and with --follow keep printing new lines until stopped.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     path = f"/instances/{quote(a.instance)}/logs"
     lines = ctx.client.get(path, lines=a.lines).data.get("text", "").splitlines()
@@ -423,6 +587,14 @@ def new_lines(before: list[str], after: list[str]) -> list[str]:
 
 
 def instances_open(ctx: Context) -> None:
+    """`sudoo instances open`: print an instance's address and open it in a browser when run in a terminal.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: With exit code CONFLICT when the instance has no address yet.
+    """
     instance = _instance(ctx, ctx.args.instance)
     url = instance.get("url")
     if not url:
@@ -464,6 +636,14 @@ def deploy(ctx: Context) -> None:
 
 
 def _instance_names(value: Any) -> list[str]:
+    """Read instance names from the shapes the panel uses.
+
+    Args:
+        value: A list of names or objects with a "name", an object with "names", a single name, or something else.
+
+    Returns:
+        The names; an empty list when there are none.
+    """
     if isinstance(value, list):
         return [v if isinstance(v, str) else str(v.get("name")) for v in value if v]
     if isinstance(value, dict):
@@ -475,6 +655,7 @@ def _instance_names(value: Any) -> list[str]:
 
 # -- backups ----------------------------------------------------------------------------------------------------------
 
+# Columns of the backups table. Both the older and the newer field names for size and time are accepted.
 BACKUP_COLUMNS = [
     ("file", get("file")),
     ("instance", get("instance")),
@@ -483,6 +664,7 @@ BACKUP_COLUMNS = [
     ("size", lambda b: size(b.get("size", b.get("size_bytes")))),
     ("created", lambda b: when(b.get("created", b.get("created_at")))),
 ]
+# Columns of the off-site copies table.
 OFFSITE_COLUMNS = [
     ("id", get("id")),
     ("instance", get("instance")),
@@ -495,6 +677,13 @@ OFFSITE_COLUMNS = [
 
 
 def backups_list(ctx: Context) -> None:
+    """`sudoo backups list`: backups (or off-site copies with --offsite), optionally of one instance.
+
+    When the token may not list all backups (403), the backups of the named instance are read from the instance.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     if a.offsite:
         items = ctx.client.get("/offsite/copies").data or []
@@ -517,10 +706,25 @@ def backups_list(ctx: Context) -> None:
 
 
 def backups_create(ctx: Context) -> None:
+    """`sudoo backups create`: back an instance up now and follow the job.
+
+    Args:
+        ctx: The run context.
+    """
     ctx.job(ctx.client.post(f"/instances/{quote(ctx.args.instance)}/actions/backup", {}).data)
 
 
 def backups_restore(ctx: Context) -> None:
+    """`sudoo backups restore`: restore a backup, or an off-site copy, into an instance and follow the job.
+
+    Asks for confirmation unless --yes is given. The panel takes a before-restore backup first.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: When both --file and --offsite are given (USAGE) or the confirmation is refused.
+    """
     a = ctx.args
     if a.file and a.offsite:
         raise CliError("Give --file or --offsite, not both.", USAGE)
@@ -542,6 +746,19 @@ def backups_restore(ctx: Context) -> None:
 
 
 def backups_download(ctx: Context) -> None:
+    """`sudoo backups download`: save a backup file.
+
+    The data is written to a temporary file first, which replaces the target only when the download is complete.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: When the name is not a plain file name or the target exists without --force (USAGE).
+
+    Side effects:
+        Writes a file; shows the downloaded size on stderr when it is a terminal.
+    """
     a = ctx.args
     name = Path(a.file).name
     if name != a.file or name in ("", ".", ".."):
@@ -557,6 +774,11 @@ def backups_download(ctx: Context) -> None:
     shown = [0.0]
 
     def progress(done: int) -> None:
+        """Show the number of bytes saved, at most every half second and only on a terminal.
+
+        Args:
+            done: Bytes saved so far.
+        """
         if not ctx.quiet and sys.stderr.isatty() and time.monotonic() - shown[0] > 0.5:
             shown[0] = time.monotonic()
             print(f"\r  {size(done)}", end="", file=sys.stderr, flush=True)
@@ -577,6 +799,11 @@ def backups_download(ctx: Context) -> None:
 
 
 def backups_verify(ctx: Context) -> None:
+    """`sudoo backups verify`: download and check an off-site copy, and follow the job.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     body: dict[str, Any] = {}
     if a.public_key:
@@ -585,6 +812,11 @@ def backups_verify(ctx: Context) -> None:
 
 
 def backups_offsite(ctx: Context) -> None:
+    """`sudoo backups offsite`: the off-site copy settings and state.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get("/offsite")
     if ctx.json:
         emit_json(response.json())
@@ -605,6 +837,17 @@ def backups_offsite(ctx: Context) -> None:
 
 
 def _read_text(path: str) -> str:
+    """Read a text file given on the command line.
+
+    Args:
+        path: The file's path.
+
+    Returns:
+        The content.
+
+    Raises:
+        CliError: With exit code USAGE when the file cannot be read.
+    """
     try:
         return Path(path).read_text()
     except OSError as error:
@@ -615,6 +858,11 @@ def _read_text(path: str) -> str:
 
 
 def domains_list(ctx: Context) -> None:
+    """`sudoo domains list`: an instance's custom domains and where to point DNS.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get(f"/instances/{quote(ctx.args.instance)}/domains")
     if ctx.json:
         emit_json(response.json())
@@ -643,6 +891,15 @@ def domains_list(ctx: Context) -> None:
 
 
 def _domain_body(ctx: Context, **extra: Any) -> dict[str, Any]:
+    """Make the JSON body of a domain call.
+
+    Args:
+        ctx: The run context.
+        **extra: Fields to send.
+
+    Returns:
+        The fields, plus confirm_production when --confirm-production was given.
+    """
     body = dict(extra)
     if getattr(ctx.args, "confirm_production", False):
         body["confirm_production"] = True
@@ -650,10 +907,25 @@ def _domain_body(ctx: Context, **extra: Any) -> dict[str, Any]:
 
 
 def _domain_path(ctx: Context, suffix: str = "") -> str:
+    """Make the API path of the domain in the arguments.
+
+    Args:
+        ctx: The run context.
+        suffix: Text to add after the domain, for example "/check".
+
+    Returns:
+        The path below /api/v1.
+    """
     return f"/instances/{quote(ctx.args.instance)}/domains/{quote(ctx.args.domain)}{suffix}"
 
 
 def _show_domain(ctx: Context, domain: dict[str, Any]) -> None:
+    """Print a domain: its state, certificate and the DNS records to create.
+
+    Args:
+        ctx: The run context.
+        domain: The domain object.
+    """
     if ctx.json:
         emit_json(domain)
         return
@@ -676,11 +948,21 @@ def _show_domain(ctx: Context, domain: dict[str, Any]) -> None:
 
 
 def domains_add(ctx: Context) -> None:
+    """`sudoo domains add`: add a domain to an instance.
+
+    Args:
+        ctx: The run context.
+    """
     body = _domain_body(ctx, domain=ctx.args.domain)
     _show_domain(ctx, ctx.client.post(f"/instances/{quote(ctx.args.instance)}/domains", body).data)
 
 
 def domains_remove(ctx: Context) -> None:
+    """`sudoo domains remove`: remove a domain; its certificate is deleted too. Asks for confirmation unless --yes.
+
+    Args:
+        ctx: The run context.
+    """
     ctx.confirm(f"Remove {ctx.args.domain} from {ctx.args.instance} (its certificate is deleted)?")
     ctx.client.request("DELETE", _domain_path(ctx), _domain_body(ctx) or None)
     if ctx.json:
@@ -690,6 +972,14 @@ def domains_remove(ctx: Context) -> None:
 
 
 def domains_status(ctx: Context) -> None:
+    """`sudoo domains status`: one domain's state and DNS records; with --check the panel checks DNS now.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: With exit code NOT_FOUND when the instance has no such domain.
+    """
     if ctx.args.check:
         domain = ctx.client.post(_domain_path(ctx, "/check")).data
     else:
@@ -701,6 +991,11 @@ def domains_status(ctx: Context) -> None:
 
 
 def domains_primary(ctx: Context) -> None:
+    """`sudoo domains primary`: make a domain the primary one.
+
+    Args:
+        ctx: The run context.
+    """
     _show_domain(ctx, ctx.client.request("PATCH", _domain_path(ctx), _domain_body(ctx, primary=True)).data)
 
 
@@ -721,6 +1016,11 @@ def shell(ctx: Context) -> None:
 
 
 def mail_list(ctx: Context) -> None:
+    """`sudoo mail list`: the e-mails caught from a staging or development instance, newest first.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     response = ctx.client.get(f"/instances/{quote(a.instance)}/mail", q=a.search, limit=a.limit, offset=a.offset)
     if ctx.json:
@@ -743,6 +1043,11 @@ def mail_list(ctx: Context) -> None:
 
 
 def mail_show(ctx: Context) -> None:
+    """`sudoo mail show`: one caught e-mail with its text.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get(f"/instances/{quote(ctx.args.instance)}/mail/{quote(ctx.args.id)}")
     if ctx.json:
         emit_json(response.json())
@@ -762,6 +1067,7 @@ def mail_show(ctx: Context) -> None:
     print(m.get("text") or "(no text part)")
 
 
+# The resource limits a person can set with `sudoo resources set`.
 RESOURCE_KEYS = (
     "odoo_workers",
     "odoo_cron_threads",
@@ -777,6 +1083,11 @@ RESOURCE_KEYS = (
 
 
 def resources_show(ctx: Context) -> None:
+    """`sudoo resources show`: the limits that apply to an instance, its own values and the stage defaults.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get(f"/instances/{quote(ctx.args.instance)}/resources")
     if ctx.json:
         emit_json(response.json())
@@ -797,6 +1108,16 @@ def resources_show(ctx: Context) -> None:
 
 
 def resources_set(ctx: Context) -> None:
+    """`sudoo resources set`: change limits given as KEY=VALUE and follow the job.
+
+    The instance's current own limits are read first, and the given keys are changed in them.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: With exit code USAGE when an item is not KEY=VALUE or the key is not in `RESOURCE_KEYS`.
+    """
     a = ctx.args
     path = f"/instances/{quote(a.instance)}/resources"
     own: dict[str, Any] = dict(ctx.client.get(path).data.get("own") or {})
@@ -813,6 +1134,15 @@ def resources_set(ctx: Context) -> None:
 
 
 def _limit_value(value: str) -> Any:
+    """Read a limit value typed on the command line.
+
+    Args:
+        value: The text after "=".
+
+    Returns:
+        None for "", "default", "null" or "none" (the limit follows the stage again); an int or float when it is a
+        number; otherwise the text, for example "4g".
+    """
     if value.lower() in ("", "default", "null", "none"):
         return None  # follows the stage again
     try:
@@ -826,6 +1156,7 @@ def _limit_value(value: str) -> Any:
 
 # -- jobs and users ---------------------------------------------------------------------------------------------------
 
+# Columns of the jobs table.
 JOB_COLUMNS = [
     ("id", get("id")),
     ("instance", get("instance")),
@@ -838,6 +1169,11 @@ JOB_COLUMNS = [
 
 
 def jobs_list(ctx: Context) -> None:
+    """`sudoo jobs list`: recent jobs, newest first.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     response = ctx.client.get("/jobs", instance=a.instance, limit=a.limit, offset=a.offset)
     if ctx.json:
@@ -847,6 +1183,11 @@ def jobs_list(ctx: Context) -> None:
 
 
 def jobs_show(ctx: Context) -> None:
+    """`sudoo jobs show`: one job with its steps and notes; with --log also its technical log.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get(f"/jobs/{quote(ctx.args.job)}", include="log" if ctx.args.log else None)
     if ctx.json:
         emit_json(response.json())
@@ -875,10 +1216,20 @@ def jobs_show(ctx: Context) -> None:
 
 
 def jobs_follow(ctx: Context) -> None:
+    """`sudoo jobs follow`: follow a job until it ends; the exit code is JOB_FAILED when it failed.
+
+    Args:
+        ctx: The run context.
+    """
     ctx.job(ctx.client.get(f"/jobs/{quote(ctx.args.job)}").data)
 
 
 def jobs_log(ctx: Context) -> None:
+    """`sudoo jobs log`: print a job's technical log from an offset.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get(f"/jobs/{quote(ctx.args.job)}/log", offset=ctx.args.offset)
     if ctx.json:
         emit_json(response.json())
@@ -887,6 +1238,11 @@ def jobs_log(ctx: Context) -> None:
 
 
 def users_list(ctx: Context) -> None:
+    """`sudoo users list`: every account of the panel (needs a write token).
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get("/users")
     if ctx.json:
         emit_json(response.json())
@@ -906,6 +1262,11 @@ def users_list(ctx: Context) -> None:
 
 
 def roles_list(ctx: Context) -> None:
+    """`sudoo users roles`: the roles of the panel and what they are for.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get("/roles")
     if ctx.json:
         emit_json(response.json())
@@ -918,6 +1279,7 @@ def roles_list(ctx: Context) -> None:
 
 # -- teams (premium: Pro and Business) --------------------------------------------------------------------------------
 
+# The access levels a team can have in a project or branch, from lowest to highest.
 ACCESS_LEVELS = ("none", "view", "developer", "maintainer", "admin")
 
 
@@ -935,10 +1297,24 @@ def _team(ctx: Context, ref: str) -> dict[str, Any]:
 
 
 def _member_names(team: dict[str, Any]) -> list[str]:
+    """List the account names of a team's members.
+
+    Args:
+        team: The team object.
+
+    Returns:
+        The names.
+    """
     return [str(m.get("name")) if isinstance(m, dict) else str(m) for m in team.get("members") or []]
 
 
 def _show_team(ctx: Context, team: dict[str, Any]) -> None:
+    """Print a team: its details and its members.
+
+    Args:
+        ctx: The run context.
+        team: The team object.
+    """
     if ctx.json:
         emit_json(team)
         return
@@ -960,6 +1336,11 @@ def _show_team(ctx: Context, team: dict[str, Any]) -> None:
 
 
 def teams_list(ctx: Context) -> None:
+    """`sudoo teams list`: every team with its members and the projects that name it.
+
+    Args:
+        ctx: The run context.
+    """
     response = ctx.client.get("/teams")
     if ctx.json:
         emit_json(response.json())
@@ -978,10 +1359,20 @@ def teams_list(ctx: Context) -> None:
 
 
 def teams_show(ctx: Context) -> None:
+    """`sudoo teams show`: a team, found by id or name.
+
+    Args:
+        ctx: The run context.
+    """
     _show_team(ctx, _team(ctx, ctx.args.team))
 
 
 def teams_create(ctx: Context) -> None:
+    """`sudoo teams create`: make a team, optionally with members.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     body: dict[str, Any] = {"name": a.name}
     if a.description is not None:
@@ -992,10 +1383,22 @@ def teams_create(ctx: Context) -> None:
 
 
 def _change_team(ctx: Context, team: dict[str, Any], body: dict[str, Any]) -> None:
+    """Change a team with PATCH and print the result.
+
+    Args:
+        ctx: The run context.
+        team: The team to change.
+        body: The fields to change.
+    """
     _show_team(ctx, ctx.client.request("PATCH", f"/teams/{quote(str(team['id']))}", body).data)
 
 
 def teams_rename(ctx: Context) -> None:
+    """`sudoo teams rename`: give a team a new name, and optionally a new description.
+
+    Args:
+        ctx: The run context.
+    """
     a = ctx.args
     body: dict[str, Any] = {"name": a.name}
     if a.description is not None:
@@ -1004,6 +1407,11 @@ def teams_rename(ctx: Context) -> None:
 
 
 def teams_delete(ctx: Context) -> None:
+    """`sudoo teams delete`: delete a team. Asks for confirmation unless --yes.
+
+    Args:
+        ctx: The run context.
+    """
     team = _team(ctx, ctx.args.team)
     ctx.confirm(f"Delete the team {team.get('name')} (it leaves every project grant and branch lock)?")
     ctx.client.request("DELETE", f"/teams/{quote(str(team['id']))}")
@@ -1014,12 +1422,25 @@ def teams_delete(ctx: Context) -> None:
 
 
 def teams_members_add(ctx: Context) -> None:
+    """`sudoo teams members add`: add accounts to a team.
+
+    Args:
+        ctx: The run context.
+    """
     team = _team(ctx, ctx.args.team)
     members = sorted(set(_member_names(team)) | set(ctx.args.accounts))
     _change_team(ctx, team, {"members": members})
 
 
 def teams_members_remove(ctx: Context) -> None:
+    """`sudoo teams members remove`: take accounts out of a team.
+
+    Args:
+        ctx: The run context.
+
+    Raises:
+        CliError: With exit code NOT_FOUND when an account is not in the team.
+    """
     team = _team(ctx, ctx.args.team)
     current = _member_names(team)
     missing = sorted(set(ctx.args.accounts) - set(current))
@@ -1034,6 +1455,14 @@ def _access_body(access: dict[str, Any]) -> dict[str, Any]:
     """The project's access as PUT /projects/<id>/access takes it (without the names the panel adds)."""
 
     def plain(grants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep only type, id and level of each grant.
+
+        Args:
+            grants: The grants as the panel shows them.
+
+        Returns:
+            The reduced grants.
+        """
         return [{"type": g.get("type"), "id": g.get("id"), "level": g.get("level")} for g in grants or []]
 
     return {
@@ -1047,6 +1476,13 @@ def _access_body(access: dict[str, Any]) -> dict[str, Any]:
 
 
 def _show_access(ctx: Context, project: str, access: dict[str, Any]) -> None:
+    """Print a project's access settings as a table of grants.
+
+    Args:
+        ctx: The run context.
+        project: The project's id.
+        access: The access object.
+    """
     if ctx.json:
         emit_json(access)
         return
@@ -1069,6 +1505,11 @@ def _show_access(ctx: Context, project: str, access: dict[str, Any]) -> None:
 
 
 def teams_grants_list(ctx: Context) -> None:
+    """`sudoo teams grants list`: a project's grants and its branches' grants.
+
+    Args:
+        ctx: The run context.
+    """
     project = ctx.args.project
     _show_access(ctx, project, ctx.client.get(f"/projects/{quote(project)}/access").data)
 
@@ -1097,8 +1538,18 @@ def _change_grant(ctx: Context, level: str | None) -> None:
 
 
 def teams_grants_set(ctx: Context) -> None:
+    """`sudoo teams grants set`: give a team a level in a project or one of its branches.
+
+    Args:
+        ctx: The run context.
+    """
     _change_grant(ctx, ctx.args.level)
 
 
 def teams_grants_remove(ctx: Context) -> None:
+    """`sudoo teams grants remove`: take a team's grant in a project or branch away.
+
+    Args:
+        ctx: The run context.
+    """
     _change_grant(ctx, None)

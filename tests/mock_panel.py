@@ -18,15 +18,35 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
+# API token with write access, accepted by the mock panel.
 TOKEN = "sudoo_test_token_0123456789"
+# Signing secret that the mock panel checks signatures with.
 SECRET = "test-signing-secret-abcdef"
+# API token that may only read: the mock panel answers 403 to any call other than GET.
 READ_TOKEN = "sudoo_read_token_0123456789"
+# Pattern of an allowed nonce: 16 to 64 letters, digits, "-" or "_".
 NONCE = re.compile(r"[A-Za-z0-9_-]{16,64}")
+# Pattern of an allowed X-Sudoo-Acting-For value.
 ACTING_FOR = re.compile(r"[A-Za-z0-9._@+\-]{1,120}")
 
 
 class Problem(Exception):
+    """An error answer: the status, a detail text and extra headers for the answer.
+
+    Attributes:
+        status: The HTTP status code to answer with.
+        detail: The text for the problem detail.
+        headers: Extra response headers (for example Retry-After).
+    """
+
     def __init__(self, status: int, detail: str, headers: dict[str, str] | None = None) -> None:
+        """Create the problem.
+
+        Args:
+            status: The HTTP status code.
+            detail: The detail text.
+            headers: Extra response headers, or None.
+        """
         super().__init__(detail)
         self.status, self.detail, self.headers = status, detail, headers or {}
 
@@ -34,6 +54,17 @@ class Problem(Exception):
 def instance(
     name: str, stage: str = "development", status: str = "online", project: str | None = "sales"
 ) -> dict[str, Any]:
+    """Make an instance object as the panel's API shows it.
+
+    Args:
+        name: The instance's name.
+        stage: "development", "staging" or "production".
+        status: The instance's status.
+        project: The project id, or None for an instance without a project.
+
+    Returns:
+        The instance as a dict, with a repository, usage numbers and one backup.
+    """
     return {
         "name": name,
         "status": status,
@@ -71,6 +102,25 @@ def instance(
 
 @dataclass
 class State:
+    """Everything the mock panel knows, and switches that make it misbehave.
+
+    Attributes:
+        instances: Instances by name.
+        jobs: Jobs by id.
+        requests: Every request received (method, path, body, headers), in order.
+        nonces: The nonces seen, to refuse a repeated one.
+        domains: Custom domains by instance name.
+        own_resources: The instance's own resource limits by instance name.
+        teams: Teams by id.
+        access: Project access settings by project id.
+        teams_on_plan: False makes the panel refuse team changes with 403, like a plan without teams.
+        rate_limit_next: How many of the coming requests to answer with 429.
+        events_status: When set, the event stream is refused with this HTTP status.
+        fail_jobs: When True, jobs end as "failed".
+        counter: Number of jobs made, used for job ids.
+        lock: Guards the job counter.
+    """
+
     instances: dict[str, dict[str, Any]] = field(default_factory=dict)
     jobs: dict[str, dict[str, Any]] = field(default_factory=dict)
     requests: list[dict[str, Any]] = field(default_factory=list)
@@ -87,6 +137,15 @@ class State:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def new_job(self, name: str | None, action: str) -> dict[str, Any]:
+        """Make and keep a new job in the "queued" status.
+
+        Args:
+            name: The instance the job is for, or None.
+            action: The job's action label.
+
+        Returns:
+            The job object.
+        """
         with self.lock:
             self.counter += 1
             job_id = f"job{self.counter:09d}"
@@ -108,7 +167,14 @@ class State:
         return job
 
     def advance(self, job: dict[str, Any]) -> dict[str, Any]:
-        """queued -> running (50 %) -> success, or failed when fail_jobs."""
+        """Move a job one step: queued, then running (50 %), then success, or failed when fail_jobs is set.
+
+        Args:
+            job: The job to move one step on.
+
+        Returns:
+            The same job object, changed in place. A finished "Delete" job also removes its instance.
+        """
         if job["status"] == "queued":
             job.update(status="running", progress_percent=50)
             job["steps"][0]["status"] = "running"
@@ -125,6 +191,11 @@ class State:
 
 
 def default_state() -> State:
+    """The panel's starting state: three instances (production, development, staging) and one custom domain.
+
+    Returns:
+        The new `State`.
+    """
     state = State()
     for name, stage in (("sales-main", "production"), ("sales-dev", "development"), ("shop", "staging")):
         state.instances[name] = instance(name, stage, project="shop" if name == "shop" else "sales")
@@ -142,11 +213,20 @@ def default_state() -> State:
     return state
 
 
+# Account names of the mock panel and their display names.
 ACCOUNTS = {"sam": "Sam Lee", "ana": "Ana Diaz", "omar": "Omar Haddad"}
 
 
 def team_out(state: State, team: dict[str, Any]) -> dict[str, Any]:
-    """A team as GET /teams answers it: members with their names and roles, the projects that name it."""
+    """A team as GET /teams answers it: members with their names and roles, the projects that name it.
+
+    Args:
+        state: The panel state.
+        team: The stored team.
+
+    Returns:
+        The team object for an answer.
+    """
     named = any(
         g["type"] == "team" and g["id"] == team["id"]
         for a in state.access.values()
@@ -164,9 +244,26 @@ def team_out(state: State, team: dict[str, Any]) -> dict[str, Any]:
 
 
 def access_out(state: State, project_id: str) -> dict[str, Any]:
+    """A project's access settings as GET /projects/<id>/access answers them.
+
+    Args:
+        state: The panel state.
+        project_id: The project's id.
+
+    Returns:
+        The access object, with team names added to the grants.
+    """
     access = state.access.get(project_id, {"mode": "panel_roles", "grants": [], "branches": {}})
 
     def named(grants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add the team's name to each grant.
+
+        Args:
+            grants: The stored grants.
+
+        Returns:
+            The grants with a "name" key.
+        """
         return [{**g, "name": (state.teams.get(g["id"]) or {}).get("name")} for g in grants]
 
     return {
@@ -179,25 +276,33 @@ def access_out(state: State, project_id: str) -> dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
+    """The HTTP request handler of the mock panel."""
+
     server: MockPanel
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format: str, *args: Any) -> None:
+        """Do not log requests."""
         pass
 
     def do_GET(self) -> None:
+        """Handle a GET request."""
         self._handle("GET")
 
     def do_POST(self) -> None:
+        """Handle a POST request."""
         self._handle("POST")
 
     def do_PUT(self) -> None:
+        """Handle a PUT request."""
         self._handle("PUT")
 
     def do_PATCH(self) -> None:
+        """Handle a PATCH request."""
         self._handle("PATCH")
 
     def do_DELETE(self) -> None:
+        """Handle a DELETE request."""
         self._handle("DELETE")
 
     # -- plumbing --------------------------------------------------------------------------------------------------
@@ -210,6 +315,15 @@ class Handler(BaseHTTPRequestHandler):
         raw: bytes | None = None,
         ctype: str = "application/json",
     ) -> None:
+        """Write one answer.
+
+        Args:
+            status: The HTTP status code.
+            payload: A value to send as JSON; an empty body when None.
+            headers: Extra response headers.
+            raw: Raw body bytes, used instead of `payload` when given.
+            ctype: The Content-Type of the answer.
+        """
         body = raw if raw is not None else (b"" if payload is None else json.dumps(payload).encode())
         self.send_response(status)
         self.send_header("Content-Type", ctype)
@@ -221,6 +335,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _problem(self, status: int, detail: str, headers: dict[str, str] | None = None) -> None:
+        """Answer with a problem detail (application/problem+json).
+
+        Args:
+            status: The HTTP status code.
+            detail: The detail text.
+            headers: Extra response headers.
+        """
         titles = {
             400: "Bad Request",
             401: "Unauthorized",
@@ -240,7 +361,19 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, problem, headers, ctype="application/problem+json")
 
     def _verify(self, method: str, body: bytes) -> str:
-        """The caller's scope, after checking the signature like the panel."""
+        """The caller's scope, after checking the signature like the panel.
+
+        Args:
+            method: The HTTP method of the request.
+            body: The request body bytes.
+
+        Returns:
+            "write" or "read", by the token used.
+
+        Raises:
+            Problem: With status 401 or 400 when the token, the timestamp, the nonce, the acting-for value or the signature
+                is not valid.
+        """
         auth = self.headers.get("Authorization", "")
         tokens = {TOKEN: "write", READ_TOKEN: "read"}
         token = auth.removeprefix("Bearer ")
@@ -265,6 +398,11 @@ class Handler(BaseHTTPRequestHandler):
         return tokens[token]
 
     def _handle(self, method: str) -> None:
+        """Check one request and route it, turning a `Problem` into an error answer.
+
+        Args:
+            method: The HTTP method.
+        """
         state = self.server.state
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
@@ -292,15 +430,34 @@ class Handler(BaseHTTPRequestHandler):
     def ok(
         self, data: Any, meta: dict[str, Any] | None = None, status: int = 200, headers: dict[str, str] | None = None
     ) -> None:
+        """Answer with {"data": ..., "meta": ...}.
+
+        Args:
+            data: The value for "data".
+            meta: The value for "meta", left out when None.
+            status: The HTTP status code.
+            headers: Extra response headers.
+        """
         payload: dict[str, Any] = {"data": data}
         if meta is not None:
             payload["meta"] = meta
         self._send(status, payload, headers)
 
     def job(self, job: dict[str, Any], headers: dict[str, str] | None = None) -> None:
+        """Answer 202 with the job and a Location header that points to it.
+
+        Args:
+            job: The job object.
+            headers: Extra response headers.
+        """
         self.ok(job, status=202, headers={"Location": f"/api/v1/jobs/{job['id']}", **(headers or {})})
 
     def events(self) -> None:
+        """Serve the Server-Sent Events stream: advance every unfinished job to its end, sending an event for each step.
+
+        Raises:
+            Problem: When `events_status` is set.
+        """
         state = self.server.state
         if state.events_status:
             raise Problem(state.events_status, "The event stream is not for this token.")
@@ -324,11 +481,34 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def route(h: Handler, method: str, path: str, query: dict[str, list[str]], body: Any) -> None:
+    """Answer one API request, by method and path.
+
+    Args:
+        h: The request handler to answer with.
+        method: The HTTP method.
+        path: The path below /api/v1.
+        query: The parsed query string.
+        body: The parsed JSON body, or None.
+
+    Raises:
+        Problem: For an unknown route (404) and for the errors the real panel would give.
+    """
     state = h.server.state
     q = {k: v[0] for k, v in query.items()}
     parts = [unquote(p) for p in path.strip("/").split("/")]
 
     def need_instance(name: str) -> dict[str, Any]:
+        """Find an instance or fail.
+
+        Args:
+            name: The instance's name.
+
+        Returns:
+            The instance object.
+
+        Raises:
+            Problem: With status 404 when there is no such instance.
+        """
         if name not in state.instances:
             raise Problem(404, f"There is no instance {name}.")
         return state.instances[name]
@@ -726,21 +906,40 @@ def route(h: Handler, method: str, path: str, query: dict[str, list[str]], body:
 
 
 class MockPanel(ThreadingHTTPServer):
+    """A small HTTP server that runs in a thread and acts as a panel; use it as a context manager.
+
+    Attributes:
+        state: What the panel knows.
+        thread: The thread that serves requests.
+    """
+
     daemon_threads = True
 
     def __init__(self) -> None:
+        """Bind to a free port on 127.0.0.1 and prepare the thread; the server starts on `__enter__`."""
         super().__init__(("127.0.0.1", 0), Handler)
         self.state = default_state()
         self.thread = threading.Thread(target=self.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
 
     @property
     def url(self) -> str:
+        """The address of the server, for example http://127.0.0.1:50321.
+
+        Returns:
+            The address.
+        """
         return f"http://127.0.0.1:{self.server_address[1]}"
 
     def __enter__(self) -> MockPanel:
+        """Start serving.
+
+        Returns:
+            The panel itself.
+        """
         self.thread.start()
         return self
 
     def __exit__(self, *exc: object) -> None:
+        """Stop serving and close the socket."""
         self.shutdown()
         self.server_close()

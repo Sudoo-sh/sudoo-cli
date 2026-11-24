@@ -18,6 +18,16 @@ from .mock_panel import SECRET, TOKEN, MockPanel
 
 
 def _login(panel: MockPanel, monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
+    """Run `sudoo login --url <panel>` with the test token and secret in the environment.
+
+    Args:
+        panel: The mock panel to log in to.
+        monkeypatch: Used to set and remove the environment variables.
+        *args: More command-line arguments.
+
+    Returns:
+        The exit code of the command.
+    """
     monkeypatch.setenv("SUDOO_TOKEN", TOKEN)
     monkeypatch.setenv("SUDOO_SECRET", SECRET)
     code = main(["login", "--url", panel.url, *args])
@@ -29,6 +39,7 @@ def _login(panel: MockPanel, monkeypatch: pytest.MonkeyPatch, *args: str) -> int
 def test_login_keeps_secrets_in_a_private_file(
     panel: MockPanel, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Test: login keeps secrets in a private file."""
     assert _login(panel, monkeypatch) == 0
     out = capsys.readouterr().out
     assert TOKEN not in out and SECRET not in out
@@ -41,6 +52,7 @@ def test_login_keeps_secrets_in_a_private_file(
 
 
 def test_login_checks_the_credentials(panel: MockPanel, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test: login checks the credentials."""
     monkeypatch.setenv("SUDOO_TOKEN", TOKEN)
     monkeypatch.setenv("SUDOO_SECRET", "wrong")
     assert main(["login", "--url", panel.url]) == errors.AUTH
@@ -48,6 +60,7 @@ def test_login_checks_the_credentials(panel: MockPanel, monkeypatch: pytest.Monk
 
 
 def test_login_refuses_plain_http_to_another_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test: login refuses plain http to another host."""
     monkeypatch.setenv("SUDOO_TOKEN", TOKEN)
     monkeypatch.setenv("SUDOO_SECRET", SECRET)
     assert main(["login", "--url", "http://panel.example.com", "--no-verify"]) == errors.USAGE
@@ -56,6 +69,7 @@ def test_login_refuses_plain_http_to_another_host(monkeypatch: pytest.MonkeyPatc
 def test_profiles_and_logout(
     panel: MockPanel, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Test: profiles and logout."""
     assert _login(panel, monkeypatch, "--profile", "staging") == 0
     assert _login(panel, monkeypatch, "--profile", "prod", "--default") == 0
     capsys.readouterr()
@@ -72,6 +86,7 @@ def test_profiles_and_logout(
 
 
 def test_environment_overrides_a_profile(panel: MockPanel, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test: environment overrides a profile."""
     assert _login(panel, monkeypatch) == 0
     monkeypatch.setenv("SUDOO_URL", "http://127.0.0.1:9")
     assert main(["instances", "list"]) == errors.NETWORK
@@ -81,14 +96,18 @@ def test_environment_overrides_a_profile(panel: MockPanel, monkeypatch: pytest.M
 
 
 def test_not_logged_in(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """Test: not logged in."""
     assert main(["instances", "list"]) == errors.AUTH
     assert "sudoo login" in capsys.readouterr().err
 
 
 def test_the_keyring_is_used_when_available(panel: MockPanel, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test: the keyring is used when available."""
     store: dict[tuple[str, str], str] = {}
 
     class Backend:
+        """A stand-in keyring backend with a positive priority, so that it counts as usable."""
+
         priority = 5
 
     fake = types.ModuleType("keyring")
@@ -114,6 +133,7 @@ def test_the_keyring_is_used_when_available(panel: MockPanel, monkeypatch: pytes
 
 
 def test_config_dir_follows_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test: config dir follows xdg."""
     monkeypatch.delenv("SUDOO_CONFIG_DIR")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert config.config_dir() == tmp_path / "sudoo"
@@ -121,5 +141,6 @@ def test_config_dir_follows_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 
 
 def test_ci_needs_no_files(run: Run) -> None:
+    """Test: ci needs no files."""
     assert run("instances", "list").code == 0
     assert not config.config_dir().exists()

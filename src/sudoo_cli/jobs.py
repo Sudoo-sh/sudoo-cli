@@ -1,5 +1,8 @@
-"""Following a job to its end: live through the event stream, or by polling when the stream is not available
-(an `instances` token may not open it, a proxy may cut it)."""
+"""Following a job to its end: live through the event stream, or by polling when the stream is not available.
+
+An `instances` token may not be allowed to open the stream, and a proxy may cut it. `follow` is the main entry
+point; `check` turns a failed job into an error.
+"""
 
 from __future__ import annotations
 
@@ -11,17 +14,40 @@ from typing import IO, Any
 from .client import Client, parse_events
 from .errors import JOB_FAILED, CliError
 
+# The job statuses that mean the job is over.
 FINISHED = ("success", "failed")
 
 
 def finished(job: dict[str, Any]) -> bool:
+    """Tell whether a job has ended.
+
+    Args:
+        job: The job object from the panel.
+
+    Returns:
+        True when its status is "success" or "failed".
+    """
     return job.get("status") in FINISHED
 
 
 class Progress:
-    """Prints a line whenever the job's status, step or progress changes, and every new note (to stderr)."""
+    """Prints a line whenever the job's status, step or progress changes, and every new note (to stderr).
+
+    Attributes:
+        quiet: When True nothing is printed.
+        out: The stream to print to (stderr by default).
+        last: The last status, step title and progress that were shown.
+        notes: How many notes were shown already.
+        started: Monotonic clock time at which the progress started, used for the duration in `done`.
+    """
 
     def __init__(self, quiet: bool = False, out: IO[str] | None = None) -> None:
+        """Start a progress display.
+
+        Args:
+            quiet: When True nothing is printed.
+            out: The stream to print to; stderr when None.
+        """
         self.quiet = quiet
         self.out = out or sys.stderr
         self.last: tuple[Any, ...] = ()
@@ -29,6 +55,11 @@ class Progress:
         self.started = time.monotonic()
 
     def show(self, job: dict[str, Any]) -> None:
+        """Print the job's line and any new notes, only when something changed since the last call.
+
+        Args:
+            job: The job object from the panel.
+        """
         if self.quiet:
             return
         steps = job.get("steps") or []
@@ -46,6 +77,11 @@ class Progress:
         self.notes = max(self.notes, len(notes))
 
     def done(self, job: dict[str, Any]) -> None:
+        """Print the closing line: the duration on success, the reason on failure.
+
+        Args:
+            job: The final job object.
+        """
         if self.quiet:
             return
         took = time.monotonic() - self.started
@@ -64,7 +100,25 @@ def follow(
     poll_every: float = 2.0,
     max_wait: float | None = None,
 ) -> dict[str, Any]:
-    """Wait until the job has finished; returns its last state."""
+    """Wait until the job has finished; returns its last state.
+
+    Tries the live event stream first (unless `live` is False) and falls back to polling when the stream cannot be
+    used.
+
+    Args:
+        client: The API client.
+        job: The job object to follow.
+        quiet: When True no progress lines are printed.
+        live: When False, poll instead of using the event stream.
+        poll_every: Seconds between two reads when polling.
+        max_wait: Seconds after which to give up, or None to wait without a limit.
+
+    Returns:
+        The last state of the job.
+
+    Raises:
+        CliError: When `max_wait` passes before the job has finished.
+    """
     progress = Progress(quiet)
     progress.show(job)
     deadline = None if max_wait is None else time.monotonic() + max_wait
@@ -84,6 +138,17 @@ def follow(
 
 
 def _live(client: Client, job: dict[str, Any], progress: Progress, deadline: float | None) -> dict[str, Any]:
+    """Follow a job through the event stream until it finishes, the stream ends or the deadline passes.
+
+    Args:
+        client: The API client.
+        job: The job to follow.
+        progress: Where to show the changes.
+        deadline: Monotonic clock time to stop at, or None.
+
+    Returns:
+        The last known state of the job; it may not be finished if the stream ended.
+    """
     job_id = job["id"]
     with client.open_events(["job"]) as stream:
         # Read the job again once the stream is open, so that nothing between the two is missed.
@@ -107,6 +172,13 @@ def _live(client: Client, job: dict[str, Any], progress: Progress, deadline: flo
 
 
 def check(job: dict[str, Any]) -> None:
-    """Raise when a followed job failed (exit code JOB_FAILED)."""
+    """Raise when a followed job failed (exit code JOB_FAILED).
+
+    Args:
+        job: The final job object.
+
+    Raises:
+        CliError: When the job's status is "failed".
+    """
     if job.get("status") == "failed":
         raise CliError(f"{job.get('action', 'Job')} failed: {job.get('error') or 'no reason given'}", JOB_FAILED)
