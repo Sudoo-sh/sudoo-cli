@@ -5,6 +5,14 @@ and the project uses [semantic versioning](https://semver.org). Its version foll
 
 ## [Unreleased]
 
+### Fixed
+
+- Two `sudoo` commands that change the profiles at the same moment (two terminals, two CI jobs on one runner) no
+  longer corrupt `credentials.json` or `config.json`, or lose one of the two changes. Each file is written to a
+  temporary file of its own (before, both processes used the same `.tmp` name and could mix their writes) and then
+  replaces the old one in one step, and `login`, `logout` and the credential changes read, change and write the files
+  while holding a lock on `.lock` in the config folder (flock; not on Windows).
+
 ### Changed
 
 - Formatting and lint setup: black, ruff and mypy now run on every commit with pre-commit, and an `.editorconfig` is
