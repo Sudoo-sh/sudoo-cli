@@ -16,9 +16,16 @@ import contextlib
 import json
 import os
 import re
+import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # Windows: no flock; the files are still replaced whole, but two changes at once may lose one
+    fcntl = None  # type: ignore[assignment]
 
 from .errors import AUTH, USAGE, CliError
 from .signing import ACTING_FOR
@@ -81,25 +88,79 @@ def _read(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _private_folder(folder: Path) -> Path:
+    """Make a folder only its owner can open (0700).
+
+    Args:
+        folder: The folder to make, with its parents.
+
+    Returns:
+        The folder.
+    """
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        folder.chmod(0o700)
+    return folder
+
+
+# How many `_changing` blocks this process is inside: the lock is taken by the outermost one only (an flock taken
+# again through a second descriptor of the same process would wait for itself).
+_held = 0
+
+
+@contextlib.contextmanager
+def _changing() -> Iterator[None]:
+    """Hold the config folder's lock while config.json or credentials.json is read, changed and written back.
+
+    Two `sudoo` processes at once (two terminals, two CI jobs on one runner) then change the files one after the
+    other, and neither loses what the other wrote. The lock is an flock on `.lock` in the config folder, released when
+    the block ends (or the process does). Where flock does not exist (Windows), nothing is locked.
+
+    Yields:
+        Nothing; the lock is held inside the block.
+    """
+    global _held
+    if fcntl is None or _held:
+        _held += 1
+        try:
+            yield
+        finally:
+            _held -= 1
+        return
+    fd = os.open(_private_folder(config_dir()) / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        _held += 1
+        try:
+            yield
+        finally:
+            _held -= 1
+    finally:
+        os.close(fd)  # closing the file releases the lock
+
+
 def _write_private(path: Path, data: dict[str, Any]) -> None:
     """Write a file only its owner can read (0600), in a folder only its owner can open (0700), atomically.
 
-    The data is written to a temporary file next to the target, which then replaces it.
+    The data is written to a new temporary file next to the target (its own name, never shared with another process),
+    which then replaces the target in one step; the target is never seen half-written.
 
     Args:
         path: The file to write.
         data: The object to store as JSON.
     """
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):
-        path.parent.chmod(0o700)
-    temporary = path.with_name(path.name + ".tmp")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as handle:
-        json.dump(data, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, path)
+    _private_folder(path.parent)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
 
 
 def load_config() -> dict[str, Any]:
@@ -169,9 +230,10 @@ def store_credentials(profile: str, token: str, secret: str) -> str:
         except Exception:  # noqa: S110  the backend refused: fall back to the private file
             pass
     path = config_dir() / "credentials.json"
-    data = _read(path)
-    data[profile] = {"token": token, "secret": secret}
-    _write_private(path, data)
+    with _changing():
+        data = _read(path)
+        data[profile] = {"token": token, "secret": secret}
+        _write_private(path, data)
     return str(path)
 
 
@@ -182,10 +244,11 @@ def _forget_file_credentials(profile: str) -> None:
         profile: The profile's name.
     """
     path = config_dir() / "credentials.json"
-    data = _read(path)
-    if profile in data:
-        del data[profile]
-        _write_private(path, data)
+    with _changing():
+        data = _read(path)
+        if profile in data:
+            del data[profile]
+            _write_private(path, data)
 
 
 def load_credentials(profile: str, where: str | None) -> tuple[str, str]:
@@ -222,14 +285,15 @@ def forget(profile: str) -> bool:
     Side effects:
         Changes config.json, deletes keyring entries and the entry in credentials.json.
     """
-    config = load_config()
-    profiles = config.get("profiles", {})
-    existed = profile in profiles
-    if existed:
-        del profiles[profile]
-        if config.get("default_profile") == profile:
-            config.pop("default_profile")
-        save_config(config)
+    with _changing():
+        config = load_config()
+        profiles = config.get("profiles", {})
+        existed = profile in profiles
+        if existed:
+            del profiles[profile]
+            if config.get("default_profile") == profile:
+                config.pop("default_profile")
+            save_config(config)
     keyring = _keyring()
     if keyring is not None:
         for part in ("token", "secret"):
@@ -261,18 +325,19 @@ def save_profile(
     """
     if not PROFILE_NAME.fullmatch(name):
         raise CliError("A profile name is 1 to 64 letters, digits, '.', '_' or '-'.", USAGE)
-    where = store_credentials(name, token, secret)
-    config = load_config()
-    profiles = config.setdefault("profiles", {})
-    entry: dict[str, Any] = {"url": url, "credentials": "keyring" if where == "keyring" else "file"}
-    if ca_cert:
-        entry["ca_cert"] = ca_cert
-    if acting_for:
-        entry["acting_for"] = acting_for
-    profiles[name] = entry
-    if make_default or "default_profile" not in config:
-        config["default_profile"] = name
-    save_config(config)
+    with _changing():
+        where = store_credentials(name, token, secret)
+        config = load_config()
+        profiles = config.setdefault("profiles", {})
+        entry: dict[str, Any] = {"url": url, "credentials": "keyring" if where == "keyring" else "file"}
+        if ca_cert:
+            entry["ca_cert"] = ca_cert
+        if acting_for:
+            entry["acting_for"] = acting_for
+        profiles[name] = entry
+        if make_default or "default_profile" not in config:
+            config["default_profile"] = name
+        save_config(config)
     return where
 
 
