@@ -73,6 +73,24 @@ Deploying needs a token with the `write` scope; give each pipeline its own token
 Every command, option, exit code and more CI examples: [docs/CLI.md](docs/CLI.md), also on
 [docs.sudoo.sh/cli](https://docs.sudoo.sh/cli).
 
+## How this code is organised
+
+| Path | What lives there |
+| :--- | :--- |
+| `src/sudoo_cli/cli.py` | The `sudoo` command line: options, sub-commands and the exit code. |
+| `src/sudoo_cli/commands.py` | The commands themselves; each takes the context and raises `CliError` on failure. |
+| `src/sudoo_cli/context.py` | What every command gets: the parsed options, the client and output helpers. |
+| `src/sudoo_cli/client.py` | Signed HTTPS calls to the panel's API (`/api/v1`), standard library only. |
+| `src/sudoo_cli/signing.py` | Request signing, exactly as the panel's API describes it. |
+| `src/sudoo_cli/config.py` | Profiles and credentials: which panel to talk to and how. |
+| `src/sudoo_cli/jobs.py` | Following a job to its end, live or by polling. |
+| `src/sudoo_cli/output.py` | Tables and key/value lists for people, `--json` for scripts. |
+| `src/sudoo_cli/completion.py` | Shell completion scripts, made from the command line's own definition. |
+| `src/sudoo_cli/errors.py` | The errors a command reports and the exit code of each. |
+| `scripts/build_zipapp.py` | Builds `dist/sudoo.pyz`, the whole command in one file. |
+| `tests/` | Tests against an in-process mock panel (`tests/mock_panel.py`); never a real panel. |
+| `docs/CLI.md` | The reference: every command, option and exit code. |
+
 ## Development
 
 ```bash
